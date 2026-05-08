@@ -154,12 +154,18 @@ local function buildLetterGrid(grid, onPick)
 end
 
 local function applyElim(grid, eMin, eMax)
+	eMin = tonumber(eMin) or 0
+	eMax = tonumber(eMax) or 27
+
 	for i = 1, 26 do
-		local b = grid:FindFirstChild("L_"..string.char(64+i))
+		local b = grid:FindFirstChild("L_" .. string.char(64 + i))
 		if b and (i <= eMin or i >= eMax) then
-			b.BackgroundColor3 = Color3.fromRGB(42,42,52); b.TextColor3 = Color3.fromRGB(62,62,72)
-			b.TextStrokeTransparency = 1; b.Active = false
-			local st = b:FindFirstChildOfClass("UIStroke"); if st then st.Enabled = false end
+			b.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+			b.TextColor3 = Color3.fromRGB(62, 62, 72)
+			b.TextStrokeTransparency = 1
+			b.Active = false
+			local st = b:FindFirstChildOfClass("UIStroke")
+			if st then st.Enabled = false end
 		end
 	end
 end
@@ -386,7 +392,8 @@ end)
 E.ShowLetterGuess.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
 	hideAll(); hideGuessingOverlay()
-	myElimMin = data.eliminatedMin or 0; myElimMax = data.eliminatedMax or 27
+	myElimMin = tonumber(data.eliminatedMin) or 0
+	myElimMax = tonumber(data.eliminatedMax) or 27
 	F.LGuessF.Visible = true
 	F.LGuessTitle.Text = "Guess "..tostring(data.opponentName or "?").."'s letter"
 	F.LGuessFeedback.Text = "One guess per turn"; F.LGuessFeedback.TextColor3 = Color3.fromRGB(200,200,220)
@@ -402,8 +409,11 @@ end)
 
 E.LetterGuessResult.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	if data.result == "higher" then myElimMin = data.eliminatedMin or myElimMin
-	elseif data.result == "lower" then myElimMax = data.eliminatedMax or myElimMax end
+	if data.result == "higher" then
+		myElimMin = tonumber(data.eliminatedMin) or myElimMin
+	elseif data.result == "lower" then
+		myElimMax = tonumber(data.eliminatedMax) or myElimMax
+	end
 	hideGuessingOverlay()
 	if _G.GoWideShot then _G.GoWideShot(0.45) end
 	F.WaitF.Visible = true; F.WaitLbl.Text = tostring(data.message or "Response received")
