@@ -1,0 +1,138 @@
+local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local events = RS:WaitForChild("Events")
+local BotTableSat = events:WaitForChild("BotTableSat")
+local BotTableStood = events:WaitForChild("BotTableStood")
+local BotTableCountdown = events:WaitForChild("BotTableCountdown")
+local BotTableStatus = events:WaitForChild("BotTableStatus")
+
+local botTables = workspace:WaitForChild("BotTables")
+local state = {}
+
+local function hasText(obj)
+	if not obj then return false end
+	local ok = pcall(function() local _ = obj.Text end)
+	return ok
+end
+
+local function findText(root, name)
+	local obj = root:FindFirstChild(name, true)
+	if obj and hasText(obj) then return obj end
+	return nil
+end
+
+local function setText(obj, txt)
+	if obj then pcall(function() obj.Text = txt end) end
+end
+
+local function setVisible(obj, v)
+	if obj then pcall(function() obj.Visible = v end) end
+end
+
+local function setup(model)
+	local top = model:FindFirstChild("TableTop")
+	if not top then return end
+
+	local bb = top:FindFirstChild("TableBillboard") or top:FindFirstChildWhichIsA("BillboardGui")
+	if not bb then
+		warn("[BotTableBillboardHandler] Missing TableBillboard on", model.Name)
+		return
+	end
+
+	local bg = bb:FindFirstChild("BG") or bb
+	local countLbl = findText(bg, "CountLbl")
+	local winLbl = findText(bg, "WinLbl")
+	local countdownLbl = findText(bg, "CountdownLbl")
+	local statusLbl = findText(bg, "StatusLbl") or countdownLbl
+
+	state[model.Name] = {
+		bb = bb,
+		countLbl = countLbl,
+		winLbl = winLbl,
+		countdownLbl = countdownLbl,
+		statusLbl = statusLbl,
+		occupied = false,
+	}
+end
+
+local function refreshDefault(tableId)
+	local st = state[tableId]
+	if not st then return end
+	if st.bb then st.bb.Enabled = true end
+	setVisible(st.countLbl, true)
+	setVisible(st.winLbl, true)
+	setVisible(st.countdownLbl, false)
+	if st.statusLbl and st.statusLbl ~= st.countdownLbl then
+		setVisible(st.statusLbl, false)
+	end
+	if st.countLbl then
+		setText(st.countLbl, st.occupied and "1/1 Player ✅" or "0/1 Player")
+	end
+end
+
+for _, model in ipairs(botTables:GetChildren()) do
+	if model:IsA("Model") then setup(model) end
+end
+
+for id in pairs(state) do refreshDefault(id) end
+
+BotTableSat.OnClientEvent:Connect(function(tableId, _playerName)
+	local st = state[tableId]
+	if not st then return end
+	st.occupied = true
+	refreshDefault(tableId)
+end)
+
+BotTableStood.OnClientEvent:Connect(function(tableId, _playerName)
+	local st = state[tableId]
+	if not st then return end
+	st.occupied = false
+	refreshDefault(tableId)
+end)
+
+BotTableCountdown.OnClientEvent:Connect(function(tableId, t)
+	local st = state[tableId]
+	if not st then return end
+
+	if t and t > 0 then
+		if st.bb then st.bb.Enabled = true end
+		setVisible(st.countLbl, false)
+		setVisible(st.winLbl, false)
+		setVisible(st.countdownLbl, true)
+		if st.statusLbl and st.statusLbl ~= st.countdownLbl then
+			setVisible(st.statusLbl, false)
+		end
+		if st.countdownLbl then
+			setText(st.countdownLbl, tostring(t))
+			pcall(function() st.countdownLbl.TextTransparency = 0 end)
+			TweenService:Create(
+				st.countdownLbl,
+				TweenInfo.new(0.85, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+				{ TextTransparency = 0.4 }
+			):Play()
+		end
+	else
+		refreshDefault(tableId)
+	end
+end)
+
+BotTableStatus.OnClientEvent:Connect(function(tableId, text)
+	local st = state[tableId]
+	if not st then return end
+
+	local msg = tostring(text or "")
+	if msg == "" then
+		refreshDefault(tableId)
+		return
+	end
+
+	if st.bb then st.bb.Enabled = true end
+	setVisible(st.countLbl, false)
+	setVisible(st.winLbl, false)
+	setVisible(st.countdownLbl, false)
+	setVisible(st.statusLbl, true)
+	setText(st.statusLbl, msg)
+end)
+
+print("[BotTableBillboardHandler] Ready")
