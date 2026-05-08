@@ -1,60 +1,104 @@
-local RS = game:GetService("ReplicatedStorage")
-local Equippable = RS:WaitForChild("Chairs"):WaitForChild("EquippableChairs")
-local Table = workspace:WaitForChild("Table")
-local PlayerChairsFolder = Table:WaitForChild("PlayerChairs")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local FLOOR_OFFSET = -1.65 
+local chairsRoot = ReplicatedStorage:WaitForChild("Chairs")
+local equippable = chairsRoot:WaitForChild("EquippableChairs")
+local tablesFolder = workspace:WaitForChild("Tables")
 
-local function spawnChair(slot, name)
-	local existing = PlayerChairsFolder:FindFirstChild(slot.."_Chair")
+local FLOOR_OFFSET = -1.65
+
+local function setBasicChairVisibility(tableModel, slot, visible)
+	local basic = tableModel:FindFirstChild("BasicChair" .. slot)
+	if not basic then return end
+	for _, part in ipairs(basic:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Transparency = visible and 0 or 1
+		end
+	end
+end
+
+local function spawnChair(tableModel, slot, chairName)
+	local playerChairs = tableModel:FindFirstChild("PlayerChairs")
+	if not playerChairs then
+		playerChairs = Instance.new("Folder")
+		playerChairs.Name = "PlayerChairs"
+		playerChairs.Parent = tableModel
+	end
+
+	local existing = playerChairs:FindFirstChild(slot .. "_Chair")
 	if existing then existing:Destroy() end
-	local seat = Table:FindFirstChild("Seat"..slot)
-	local basic = Table:FindFirstChild("BasicChair"..slot)
 
-	if name == "Default" or not name then
-		if basic then for _, p in ipairs(basic:GetDescendants()) do if p:IsA("BasePart") then p.Transparency = 0 end end end
+	local seat = tableModel:FindFirstChild("Seat" .. slot)
+	if not seat then return end
+
+	if not chairName or chairName == "Default" then
+		setBasicChairVisibility(tableModel, slot, true)
 		return
 	end
 
-	if basic then for _, p in ipairs(basic:GetDescendants()) do if p:IsA("BasePart") then p.Transparency = 1 end end end
-	local m = Equippable:FindFirstChild(name)
-	if not m then return end
-
-	local clone = m:Clone()
-	clone.Name = slot.."_Chair"
-	-- STRIP SCRIPTS (Fixed your character skin bug)
-	for _, d in ipairs(clone:GetDescendants()) do 
-		if d:IsA("LuaSourceContainer") or d:IsA("Seat") then d:Destroy() end 
+	local source = equippable:FindFirstChild(chairName)
+	if not source then
+		setBasicChairVisibility(tableModel, slot, true)
+		return
 	end
-	clone.Parent = PlayerChairsFolder
+
+	setBasicChairVisibility(tableModel, slot, false)
+
+	local clone = source:Clone()
+	clone.Name = slot .. "_Chair"
+
+	-- Remove scripts/seats from cloned chair assets for safety.
+	for _, item in ipairs(clone:GetDescendants()) do
+		if item:IsA("LuaSourceContainer") or item:IsA("Seat") then
+			item:Destroy()
+		end
+	end
+
+	clone.Parent = playerChairs
 
 	local _, size = clone:GetBoundingBox()
-	clone:PivotTo(seat.CFrame * CFrame.new(0, FLOOR_OFFSET + (size.Y/2), 0))
+	clone:PivotTo(seat.CFrame * CFrame.new(0, FLOOR_OFFSET + (size.Y / 2), 0))
 
 	local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart")
 	if primary then
 		primary.Anchored = false
-		local w = Instance.new("WeldConstraint")
-		w.Part0 = primary; w.Part1 = seat; w.Parent = primary
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = primary
+		weld.Part1 = seat
+		weld.Parent = primary
 	end
 end
 
 task.spawn(function()
-	local lastP = {A=nil, B=nil}
-	local lastE = {A="", B=""}
+	local lastState = {}
+
 	while true do
 		task.wait(0.5)
-		if _G.SeatManager and _G.GetEquippedChair then
-			local s = _G.SeatManager.getSeats()
-			for _, v in ipairs({"A", "B"}) do
-				local p = s[v] and s[v].player
-				local eq = p and _G.GetEquippedChair(p) or "Default"
-				if p ~= lastP[v] or eq ~= lastE[v] then
-					lastP[v] = p
-					lastE[v] = eq
-					spawnChair(v, eq)
+
+		if not _G.SeatManager or not _G.GetEquippedChair then
+			continue
+		end
+
+		local allTables = _G.SeatManager.getAllTables and _G.SeatManager.getAllTables() or {}
+		for tableId, tableState in pairs(allTables) do
+			lastState[tableId] = lastState[tableId] or {
+				A = { player = nil, equipped = "" },
+				B = { player = nil, equipped = "" },
+			}
+
+			for _, slot in ipairs({ "A", "B" }) do
+				local seatState = tableState.seats[slot]
+				local player = seatState and seatState.player
+				local equipped = player and _G.GetEquippedChair(player) or "Default"
+
+				local cache = lastState[tableId][slot]
+				if cache.player ~= player or cache.equipped ~= equipped then
+					cache.player = player
+					cache.equipped = equipped
+					spawnChair(tableState.model, slot, equipped)
 				end
 			end
 		end
 	end
 end)
+
+print("[TableChairVisualizer] Multi-table ready")
