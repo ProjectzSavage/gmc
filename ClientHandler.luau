@@ -29,6 +29,7 @@ for _, n in ipairs({
 	"ShowWait", "ShowBillboard", "TimerTick",
 	"RoundOver", "GameOver", "ResetAll",
 	"RequestSit", "RequestStand", "TableCountdown",
+	"BotTableCountdown", -- add this
 	}) do
 	E[n] = Events:WaitForChild(n, 10)
 end
@@ -265,7 +266,18 @@ E.TableCountdown.OnClientEvent:Connect(function(t)
 	countdownDone = true
 	if pendingShowLetterPick then pendingShowLetterPick = false; openLetterPick() end
 end)
-
+E.BotTableCountdown.OnClientEvent:Connect(function(_tableId, t)
+	if t and t > 0 then
+		countdownDone = false
+		hideAll()
+		return
+	end
+	countdownDone = true
+	if pendingShowLetterPick then
+		pendingShowLetterPick = false
+		openLetterPick()
+	end
+end)
 E.PlayerSat.OnClientEvent:Connect(function(slot, name)
 	playerCount = math.min(playerCount + 1, 2)
 	seatNames[slot] = name
@@ -313,7 +325,14 @@ end)
 
 E.ShowLetterPick.OnClientEvent:Connect(function()
 	if not iAmSeated then return end
-	if not countdownDone then pendingShowLetterPick = true; return end
+
+	-- If in bot mode, do not hard-block on countdown flag.
+	local inBotMode = _G.ActiveBotTableId ~= nil
+	if not inBotMode and not countdownDone then
+		pendingShowLetterPick = true
+		return
+	end
+
 	openLetterPick()
 end)
 
