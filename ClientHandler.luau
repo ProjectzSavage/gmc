@@ -214,9 +214,33 @@ local function openLetterPick()
 	end)
 end
 
-local Table = workspace:WaitForChild("Table")
-local SeatA = Table:WaitForChild("SeatA")
-local SeatB = Table:WaitForChild("SeatB")
+local function getClosestTableModel()
+	local folder = workspace:WaitForChild("Tables")
+	local character = player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		return folder:FindFirstChildWhichIsA("Model")
+	end
+
+	local best, bestDist = nil, math.huge
+	for _, model in ipairs(folder:GetChildren()) do
+		if model:IsA("Model") then
+			local top = model:FindFirstChild("TableTop")
+			if top and top:IsA("BasePart") then
+				local d = (top.Position - hrp.Position).Magnitude
+				if d < bestDist then
+					bestDist = d
+					best = model
+				end
+			end
+		end
+	end
+	return best
+end
+
+local activeTable = getClosestTableModel()
+local SeatA = activeTable and activeTable:FindFirstChild("SeatA")
+local SeatB = activeTable and activeTable:FindFirstChild("SeatB")
 
 local function watchSeat(part, slot)
 	task.spawn(function()
