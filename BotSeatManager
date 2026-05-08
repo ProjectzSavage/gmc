@@ -1,0 +1,241 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+
+local function ensureRemote(name)
+	local r = events:FindFirstChild(name)
+	if r then return r end
+	r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = events
+	return r
+end
+
+local RequestStand = events:WaitForChild("RequestStand")
+local PlayerSat = events:WaitForChild("PlayerSat")
+local PlayerStood = events:WaitForChild("PlayerStood")
+
+local BotTableSat = ensureRemote("BotTableSat")
+local BotTableStood = ensureRemote("BotTableStood")
+local BotCameraFocus = ensureRemote("BotCameraFocus")
+
+local botTablesFolder = workspace:WaitForChild("BotTables")
+
+local botTables = {}
+local playerToTable = {}
+local lockedPlayers = {} -- true while active bot match (can't stand/jump-out)
+
+local function restoreMovement(h, hrp)
+	if h then
+		h.AutoRotate = true
+		h.PlatformStand = false
+		h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+		h.WalkSpeed = 16
+		h.JumpPower = 50
+		h.JumpHeight = 7.2
+		h.Sit = false
+	end
+	if hrp then
+		hrp.Anchored = false
+	end
+end
+
+local function lockSeated(h, hrp, seatPart)
+	if not h or not hrp then return end
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+	hrp.CFrame = seatPart.CFrame * CFrame.new(0, seatPart.Size.Y / 2 + 2.05, 0)
+	hrp.Anchored = true
+
+	h.AutoRotate = false
+	h.PlatformStand = false
+	h.WalkSpeed = 0
+	h.JumpPower = 0
+	h.JumpHeight = 0
+	h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+	h:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+	h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+	h:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
+	h.Sit = true
+	h:ChangeState(Enum.HumanoidStateType.Seated)
+end
+
+local function setPromptEnabled(st, enabled)
+	st.promptEnabled = enabled == true
+	if st.prompt then
+		st.prompt.Enabled = st.promptEnabled
+	end
+end
+
+local function standPlayer(player)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return false end
+
+	local st = botTables[tableId]
+	if not st or st.player ~= player then
+		playerToTable[player.UserId] = nil
+		lockedPlayers[player.UserId] = nil
+		return false
+	end
+
+	local char = player.Character
+	local h = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+	restoreMovement(h, hrp)
+	if hrp then
+		hrp.CFrame = st.seatPart.CFrame * CFrame.new(0, 4, 5)
+	end
+
+	if st.deadConn then
+		st.deadConn:Disconnect()
+		st.deadConn = nil
+	end
+
+	st.player = nil
+	playerToTable[player.UserId] = nil
+	lockedPlayers[player.UserId] = nil
+	setPromptEnabled(st, true)
+
+	PlayerStood:FireAllClients("B", player.Name, tableId)
+	BotTableStood:FireAllClients(tableId, player.Name)
+	BotCameraFocus:FireClient(player, nil) -- clear camera override
+
+	if _G.OnBotStood then
+		_G.OnBotStood(player, tableId)
+	end
+
+	return true
+end
+
+local function sitPlayer(player, tableId)
+	if playerToTable[player.UserId] then return false end
+	local st = botTables[tableId]
+	if not st or st.player or not st.promptEnabled then return false end
+
+	local char = player.Character
+	local h = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not h or not hrp then return false end
+
+	lockSeated(h, hrp, st.seatPart)
+
+	st.player = player
+	playerToTable[player.UserId] = tableId
+	lockedPlayers[player.UserId] = false -- lock starts once match begins
+	setPromptEnabled(st, false)
+
+	if st.deadConn then st.deadConn:Disconnect() end
+	st.deadConn = h.Died:Connect(function()
+		if st.player == player then
+			standPlayer(player)
+		end
+	end)
+
+	PlayerSat:FireAllClients("B", player.Name, tableId)
+	BotTableSat:FireAllClients(tableId, player.Name)
+	BotCameraFocus:FireClient(player, tableId) -- force camera target table
+
+	if _G.OnBotSeated then
+		_G.OnBotSeated(tableId, player)
+	end
+
+	return true
+end
+
+local function registerTable(model)
+	local tableTop = model:FindFirstChild("TableTop")
+	local seatB = model:FindFirstChild("SeatB")
+	if not tableTop or not seatB then
+		warn("[BotSeatManager] Missing TableTop/SeatB on", model:GetFullName())
+		return
+	end
+
+	seatB.Anchored = true
+
+	local st = {
+		id = model.Name,
+		model = model,
+		tableTop = tableTop,
+		seatPart = seatB,
+		player = nil,
+		prompt = nil,
+		promptEnabled = true,
+		deadConn = nil,
+	}
+	botTables[model.Name] = st
+
+	for _, c in ipairs(tableTop:GetChildren()) do
+		if c:IsA("ProximityPrompt") and c.Name == "BotSitPrompt" then
+			c:Destroy()
+		end
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "BotSitPrompt"
+	prompt.ActionText = "Play Solo"
+	prompt.ObjectText = "Guess My Country Bot"
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = tableTop
+	st.prompt = prompt
+
+	prompt.Triggered:Connect(function(player)
+		sitPlayer(player, model.Name)
+	end)
+end
+
+for _, child in ipairs(botTablesFolder:GetChildren()) do
+	if child:IsA("Model") then
+		registerTable(child)
+	end
+end
+
+RequestStand.OnServerEvent:Connect(function(player)
+	-- while bot game active, ignore stand requests
+	if lockedPlayers[player.UserId] then
+		return
+	end
+	standPlayer(player)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	standPlayer(player)
+end)
+
+RunService.Heartbeat:Connect(function()
+	for _, st in pairs(botTables) do
+		local p = st.player
+		if p then
+			local char = p.Character
+			local h = char and char:FindFirstChildOfClass("Humanoid")
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			lockSeated(h, hrp, st.seatPart)
+		end
+	end
+end)
+
+_G.BotSeatManager = {
+	getTableModel = function(tableId)
+		local st = botTables[tableId]
+		return st and st.model or nil
+	end,
+	setPromptEnabled = function(tableId, enabled)
+		local st = botTables[tableId]
+		if st then setPromptEnabled(st, enabled) end
+	end,
+	setPlayerLocked = function(player, locked)
+		if not player then return end
+		lockedPlayers[player.UserId] = locked == true
+	end,
+	standPlayer = standPlayer,
+}
+
+print("[BotSeatManager] Ready")
