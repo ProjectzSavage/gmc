@@ -1,0 +1,520 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+local CountryData = require(ReplicatedStorage:WaitForChild("CountryData"))
+
+local function event(name)
+	return events:WaitForChild(name)
+end
+
+local function ensureRemote(name)
+	local r = events:FindFirstChild(name)
+	if r then return r end
+	r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = events
+	return r
+end
+
+local E = {
+	ShowLetterPick = event("ShowLetterPick"),
+	LetterChosen = event("LetterChosen"),
+	ShowCountryPick = event("ShowCountryPick"),
+	CountryChosen = event("CountryChosen"),
+	ShowLetterGuess = event("ShowLetterGuess"),
+	SubmitLetterGuess = event("SubmitLetterGuess"),
+	LetterGuessResult = event("LetterGuessResult"),
+	ShowCountryGuess = event("ShowCountryGuess"),
+	SubmitCountryGuess = event("SubmitCountryGuess"),
+	CountryGuessResult = event("CountryGuessResult"),
+	ShowWait = event("ShowWait"),
+	TimerTick = event("TimerTick"),
+	GameOver = event("GameOver"),
+}
+
+local BotTableCountdown = ensureRemote("BotTableCountdown")
+local BotTableStatus = ensureRemote("BotTableStatus")
+
+local CFG = {
+	COUNTDOWN_START = 3,
+	TURN_TIME = 45,
+	BOT_THINK = 1.2,
+	SWITCH_DELAY = 1.0,
+}
+
+local sessions = {}
+local playerToTable = {}
+
+local function countryListForLetter(letter)
+	local list = CountryData.ByLetter[string.upper(letter or "")]
+	return (type(list) == "table") and list or {}
+end
+
+local function randomCountryForLetter(letter)
+	local list = countryListForLetter(letter)
+	if #list == 0 then return nil end
+	local entry = list[math.random(1, #list)]
+	return entry and entry.name or nil
+end
+
+local function randomLetterWithCountries()
+	local letters = {}
+	for i = 65, 90 do
+		local L = string.char(i)
+		if #countryListForLetter(L) > 0 then
+			table.insert(letters, L)
+		end
+	end
+	if #letters == 0 then return "A" end
+	return letters[math.random(1, #letters)]
+end
+
+local function byteOfLetter(letter)
+	return string.byte(string.upper(letter or "A")) - 64
+end
+
+local function letterOfByte(value)
+	return string.char(64 + math.clamp(value, 1, 26))
+end
+
+local function getDisplayLabel(tableId)
+	local model = _G.BotSeatManager and _G.BotSeatManager.getTableModel and _G.BotSeatManager.getTableModel(tableId)
+	if not model then return nil end
+	local displayPart = model:FindFirstChild("BotDisplay")
+	if not displayPart then return nil end
+
+	local billboard = displayPart:FindFirstChildWhichIsA("BillboardGui")
+	if not billboard then return nil end
+
+	local lbl = billboard:FindFirstChild("Lbl") or billboard:FindFirstChild("Text") or billboard:FindFirstChildWhichIsA("TextLabel")
+	if lbl and lbl:IsA("TextLabel") then
+		return lbl
+	end
+	return nil
+end
+
+local function botSpeak(tableId, text)
+	local lbl = getDisplayLabel(tableId)
+	if lbl then lbl.Text = tostring(text or "") end
+end
+
+local function clearSession(tableId)
+	local session = sessions[tableId]
+	if not session then return end
+
+	sessions[tableId] = nil
+	playerToTable[session.player.UserId] = nil
+
+	BotTableCountdown:FireAllClients(tableId, 0)
+	BotTableStatus:FireAllClients(tableId, "")
+
+	if _G.BotSeatManager then
+		if _G.BotSeatManager.setPromptEnabled then
+			_G.BotSeatManager.setPromptEnabled(tableId, true)
+		end
+		if _G.BotSeatManager.setPlayerLocked then
+			_G.BotSeatManager.setPlayerLocked(session.player, false)
+		end
+	end
+end
+
+local function endSession(tableId, winnerName, reason)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+
+	session.active = false
+	session.token += 1
+
+	local playerWon = (winnerName == session.player.Name)
+	BotTableStatus:FireAllClients(tableId, playerWon and "You win!" or "Bot wins!")
+	botSpeak(tableId, playerWon and "You win!" or "Bot wins!")
+
+	E.GameOver:FireClient(session.player, {
+		winner = winnerName,
+		reason = reason or "",
+		rewardCash = playerWon and 200 or 0,
+	})
+
+	task.delay(1.2, function()
+		if _G.BotSeatManager and _G.BotSeatManager.standPlayer then
+			_G.BotSeatManager.standPlayer(session.player)
+		end
+		clearSession(tableId)
+	end)
+end
+
+local function runPlayerTurn(session)
+	if not session.active then return end
+
+	local player = session.player
+	session.turn = "player"
+	session.token += 1
+	local turnToken = session.token
+
+	if session.playerMode == "letter" then
+		BotTableStatus:FireAllClients(session.tableId, "Guess bot letter")
+		botSpeak(session.tableId, "Bot: Guess my letter")
+		E.ShowLetterGuess:FireClient(player, {
+			eliminatedMin = session.playerSecret.elimMin,
+			eliminatedMax = session.playerSecret.elimMax,
+			turnTime = CFG.TURN_TIME,
+		})
+	else
+		BotTableStatus:FireAllClients(session.tableId, "Guess bot country")
+		botSpeak(session.tableId, "Bot: Guess my country")
+		local wrong = {}
+		for name, used in pairs(session.playerSecret.wrongCountries) do
+			if used then table.insert(wrong, name) end
+		end
+		table.sort(wrong)
+		E.ShowCountryGuess:FireClient(player, {
+			letter = session.botSecret.letter,
+			wrongCountries = wrong,
+			turnTime = CFG.TURN_TIME,
+		})
+	end
+
+	task.spawn(function()
+		for t = CFG.TURN_TIME, 1, -1 do
+			if not session.active or session.token ~= turnToken or session.turn ~= "player" then return end
+			E.TimerTick:FireClient(player, t)
+			task.wait(1)
+		end
+
+		if not session.active or session.token ~= turnToken or session.turn ~= "player" then return end
+
+		if session.playerMode == "letter" then
+			E.LetterGuessResult:FireClient(player, {
+				result = "timeout",
+				message = "TIMEOUT",
+				eliminatedMin = session.playerSecret.elimMin,
+				eliminatedMax = session.playerSecret.elimMax,
+			})
+		else
+			E.CountryGuessResult:FireClient(player, {
+				result = "timeout",
+				message = "TIMEOUT",
+			})
+		end
+
+		session.turn = "bot"
+		task.delay(CFG.SWITCH_DELAY, function()
+			if session.active then
+				session.runBotTurn()
+			end
+		end)
+	end)
+end
+
+local function botCountryGuess(session)
+	local knowledge = session.botKnowledge
+	if not knowledge then return end
+
+	local list = countryListForLetter(knowledge.letter)
+	if #list == 0 then
+		BotTableStatus:FireAllClients(session.tableId, "Your turn")
+		task.delay(CFG.SWITCH_DELAY, function() if session.active then runPlayerTurn(session) end end)
+		return
+	end
+
+	local pickName
+	for _, c in ipairs(list) do
+		if not knowledge.wrongCountries[c.name] then
+			pickName = c.name
+			break
+		end
+	end
+
+	if not pickName then
+		BotTableStatus:FireAllClients(session.tableId, "Your turn")
+		task.delay(CFG.SWITCH_DELAY, function() if session.active then runPlayerTurn(session) end end)
+		return
+	end
+
+	botSpeak(session.tableId, "Bot: Is your country " .. pickName .. "?")
+	BotTableStatus:FireAllClients(session.tableId, "Bot guessing country")
+
+	task.delay(CFG.BOT_THINK, function()
+		if not session.active then return end
+
+		if string.lower(pickName) == string.lower(session.playerSecret.country) then
+			endSession(session.tableId, "BOT", "bot_country_guessed")
+			return
+		end
+
+		knowledge.wrongCountries[pickName] = true
+		BotTableStatus:FireAllClients(session.tableId, "Your turn")
+		task.delay(CFG.SWITCH_DELAY, function()
+			if session.active then runPlayerTurn(session) end
+		end)
+	end)
+end
+
+local function runBotTurn(session)
+	if not session.active then return end
+	session.turn = "bot"
+	session.token += 1
+
+	local knowledge = session.botKnowledge
+	if not knowledge then return end
+
+	if not knowledge.letterKnown then
+		local guessByte = math.floor((knowledge.elimMin + knowledge.elimMax) / 2)
+		local guessLetter = letterOfByte(guessByte)
+		local playerByte = byteOfLetter(session.playerSecret.letter)
+
+		botSpeak(session.tableId, "Bot: Is your letter " .. guessLetter .. "?")
+		BotTableStatus:FireAllClients(session.tableId, "Bot guessing letter")
+
+		task.delay(CFG.BOT_THINK, function()
+			if not session.active then return end
+
+			if guessByte == playerByte then
+				knowledge.letterKnown = true
+				knowledge.letter = guessLetter
+				botSpeak(session.tableId, "Bot got your letter")
+				task.delay(CFG.BOT_THINK, function()
+					if session.active then botCountryGuess(session) end
+				end)
+			elseif guessByte < playerByte then
+				knowledge.elimMin = math.max(knowledge.elimMin, guessByte)
+				BotTableStatus:FireAllClients(session.tableId, "Bot says HIGHER")
+				task.delay(CFG.SWITCH_DELAY, function() if session.active then runPlayerTurn(session) end end)
+			else
+				knowledge.elimMax = math.min(knowledge.elimMax, guessByte)
+				BotTableStatus:FireAllClients(session.tableId, "Bot says LOWER")
+				task.delay(CFG.SWITCH_DELAY, function() if session.active then runPlayerTurn(session) end end)
+			end
+		end)
+
+		return
+	end
+
+	botCountryGuess(session)
+end
+
+local function startGame(session)
+	if not session.active then return end
+	session.phase = "turn"
+	session.turn = "player"
+	session.playerMode = "letter"
+	session.runBotTurn = function() runBotTurn(session) end
+
+	if _G.BotSeatManager and _G.BotSeatManager.setPlayerLocked then
+		_G.BotSeatManager.setPlayerLocked(session.player, true)
+	end
+
+	BotTableStatus:FireAllClients(session.tableId, "Match started")
+	runPlayerTurn(session)
+end
+
+local function beginCountryPick(session)
+	session.phase = "country-pick"
+	BotTableStatus:FireAllClients(session.tableId, "Pick your country")
+	E.ShowCountryPick:FireClient(session.player, {
+		letter = session.playerSecret.letter,
+		countries = countryListForLetter(session.playerSecret.letter),
+	})
+end
+
+local function beginLetterPick(session)
+	session.phase = "letter-pick"
+	BotTableStatus:FireAllClients(session.tableId, "Pick your letter")
+	E.ShowLetterPick:FireClient(session.player)
+end
+
+local function createSession(tableId, player)
+	if sessions[tableId] then return end
+
+	local botLetter = randomLetterWithCountries()
+	local botCountry = randomCountryForLetter(botLetter)
+
+	local session = {
+		tableId = tableId,
+		player = player,
+		active = true,
+		phase = "countdown",
+		turn = "none",
+		token = 0,
+		playerMode = "letter",
+		playerSecret = {
+			letter = nil,
+			country = nil,
+			elimMin = 0,
+			elimMax = 27,
+			wrongCountries = {},
+		},
+		botSecret = {
+			letter = botLetter,
+			country = botCountry,
+		},
+		botKnowledge = {
+			elimMin = 0,
+			elimMax = 27,
+			letterKnown = false,
+			letter = nil,
+			wrongCountries = {},
+		},
+	}
+
+	sessions[tableId] = session
+	playerToTable[player.UserId] = tableId
+
+	if _G.BotSeatManager and _G.BotSeatManager.setPromptEnabled then
+		_G.BotSeatManager.setPromptEnabled(tableId, false)
+	end
+
+	task.spawn(function()
+		BotTableStatus:FireAllClients(tableId, "Bot match starting")
+		for i = CFG.COUNTDOWN_START, 1, -1 do
+			if not session.active then return end
+			BotTableCountdown:FireAllClients(tableId, i)
+			task.wait(1)
+		end
+		if not session.active then return end
+		BotTableCountdown:FireAllClients(tableId, 0)
+		BotTableStatus:FireAllClients(tableId, "")
+		beginLetterPick(session)
+	end)
+end
+
+_G.OnBotSeated = function(tableId, player)
+	createSession(tableId, player)
+end
+
+_G.OnBotStood = function(player, tableId)
+	local session = sessions[tableId]
+	if session and session.player == player then
+		clearSession(tableId)
+	end
+end
+
+E.LetterChosen.OnServerEvent:Connect(function(player, letter)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active or session.phase ~= "letter-pick" then return end
+	if session.player ~= player then return end
+
+	local list = countryListForLetter(letter)
+	if #list == 0 then return end
+
+	session.playerSecret.letter = string.upper(letter)
+	beginCountryPick(session)
+end)
+
+E.CountryChosen.OnServerEvent:Connect(function(player, country)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active or session.phase ~= "country-pick" then return end
+	if session.player ~= player then return end
+
+	local exists = false
+	for _, c in ipairs(countryListForLetter(session.playerSecret.letter)) do
+		if string.lower(c.name) == string.lower(country) then
+			exists = true
+			break
+		end
+	end
+	if not exists then return end
+
+	session.playerSecret.country = country
+	startGame(session)
+end)
+
+E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	if session.player ~= player or session.turn ~= "player" or session.playerMode ~= "letter" then return end
+
+	session.token += 1
+	local guessed = byteOfLetter(guessLetter)
+	local actual = byteOfLetter(session.botSecret.letter)
+
+	if guessed == actual then
+		E.LetterGuessResult:FireClient(player, {
+			result = "correct",
+			message = "YES",
+			eliminatedMin = session.playerSecret.elimMin,
+			eliminatedMax = session.playerSecret.elimMax,
+		})
+		session.playerMode = "country"
+		BotTableStatus:FireAllClients(session.tableId, "Correct letter. Guess country")
+		task.delay(0.7, function()
+			if session.active then runPlayerTurn(session) end
+		end)
+		return
+	end
+
+	local message
+	if guessed < actual then
+		session.playerSecret.elimMin = math.max(session.playerSecret.elimMin, guessed)
+		message = "HIGHER"
+	else
+		session.playerSecret.elimMax = math.min(session.playerSecret.elimMax, guessed)
+		message = "LOWER"
+	end
+
+	E.LetterGuessResult:FireClient(player, {
+		result = "wrong",
+		message = message,
+		eliminatedMin = session.playerSecret.elimMin,
+		eliminatedMax = session.playerSecret.elimMax,
+	})
+
+	BotTableStatus:FireAllClients(session.tableId, "Bot turn")
+	session.turn = "bot"
+	task.delay(CFG.SWITCH_DELAY, function()
+		if session.active then session.runBotTurn() end
+	end)
+end)
+
+E.SubmitCountryGuess.OnServerEvent:Connect(function(player, countryGuess)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	if session.player ~= player or session.turn ~= "player" or session.playerMode ~= "country" then return end
+
+	session.token += 1
+	if string.lower(countryGuess) == string.lower(session.botSecret.country) then
+		E.CountryGuessResult:FireClient(player, {
+			result = "correct",
+			message = "YES",
+		})
+		endSession(tableId, player.Name, "player_country_guessed")
+		return
+	end
+
+	session.playerSecret.wrongCountries[countryGuess] = true
+
+	local wrongList = {}
+	for name, used in pairs(session.playerSecret.wrongCountries) do
+		if used then table.insert(wrongList, name) end
+	end
+	table.sort(wrongList)
+
+	E.CountryGuessResult:FireClient(player, {
+		result = "wrong",
+		message = "NO",
+		wrongCountries = wrongList,
+	})
+
+	BotTableStatus:FireAllClients(session.tableId, "Bot turn")
+	session.turn = "bot"
+	task.delay(CFG.SWITCH_DELAY, function()
+		if session.active then session.runBotTurn() end
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	clearSession(tableId)
+end)
+
+print("[BotGameManager] Ready")
