@@ -1,12 +1,4 @@
--- ============================================================
--- LocalScript: StarterGui/TableBillboardHandler (MULTI-TABLE)
--- Supports:
--- - count text (0/2, 2/2 ✅)
--- - countdown tween
--- - GO then hide billboard
--- - reset on stand
--- - tableId-aware events
--- ============================================================
+-- StarterGui/TableBillboardHandler (MULTI-TABLE, robust)
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -23,12 +15,34 @@ local TablesFolder = workspace:WaitForChild("Tables")
 
 local tableState = {}
 
-local function findLabel(root, name)
+local function hasText(obj)
+	if not obj then return false end
+	local ok = pcall(function()
+		local _ = obj.Text
+	end)
+	return ok
+end
+
+local function findTextObject(root, name)
 	local obj = root:FindFirstChild(name, true)
-	if obj and obj:IsA("TextLabel") then
+	if obj and hasText(obj) then
 		return obj
 	end
 	return nil
+end
+
+local function setText(obj, text)
+	if not obj then return end
+	pcall(function()
+		obj.Text = text
+	end)
+end
+
+local function setVisible(obj, value)
+	if not obj then return end
+	pcall(function()
+		obj.Visible = value
+	end)
 end
 
 local function getClosestTableId()
@@ -39,8 +53,7 @@ local function getClosestTableId()
 		return first and first.Name or nil
 	end
 
-	local bestId = nil
-	local bestDist = math.huge
+	local bestId, bestDist = nil, math.huge
 	for _, model in ipairs(TablesFolder:GetChildren()) do
 		if model:IsA("Model") then
 			local top = model:FindFirstChild("TableTop")
@@ -64,69 +77,68 @@ local function setupTable(model)
 	if not bb then return end
 
 	local bg = bb:FindFirstChild("BG") or bb
-	local countLbl = findLabel(bg, "CountLbl")
-	local winLbl = findLabel(bg, "WinLbl")
-	local countdownLbl = findLabel(bg, "CountdownLbl")
-	local statusLbl = findLabel(bg, "StatusLbl") or countdownLbl
+	local countObj = findTextObject(bg, "CountLbl")
+	local winObj = findTextObject(bg, "WinLbl")
+	local countdownObj = findTextObject(bg, "CountdownLbl")
+	local statusObj = findTextObject(bg, "StatusLbl") or countdownObj
 
 	tableState[model.Name] = {
 		bb = bb,
-		bg = bg,
-		CountLbl = countLbl,
-		WinLbl = winLbl,
-		CountdownLbl = countdownLbl,
-		StatusLbl = statusLbl,
-		playerCount = 0,
+		CountLbl = countObj,
+		WinLbl = winObj,
+		CountdownLbl = countdownObj,
+		StatusLbl = statusObj,
+		occupied = { A = false, B = false },
 		countdownToken = 0,
 	}
 end
 
-local function updateCount(tid)
-	local st = tableState[tid]
-	if not st or not st.CountLbl then return end
+local function getCount(st)
+	local c = 0
+	if st.occupied.A then c += 1 end
+	if st.occupied.B then c += 1 end
+	return c
+end
 
-	if st.playerCount >= 2 then
-		st.CountLbl.Text = "2/2 Players ✅"
+local function updateCount(tableId)
+	local st = tableState[tableId]
+	if not st then return end
+	local count = getCount(st)
+
+	if count >= 2 then
+		setText(st.CountLbl, "2/2 Players ✅")
 	else
-		st.CountLbl.Text = tostring(st.playerCount) .. "/2 Players"
+		setText(st.CountLbl, tostring(count) .. "/2 Players")
 	end
 end
 
-local function resetBillboard(tid)
-	local st = tableState[tid]
+local function showDefault(tableId)
+	local st = tableState[tableId]
 	if not st then return end
 
+	if st.bb then st.bb.Enabled = true end
+	setVisible(st.CountLbl, true)
+	setVisible(st.WinLbl, true)
+	setVisible(st.CountdownLbl, false)
+	if st.StatusLbl and st.StatusLbl ~= st.CountdownLbl then
+		setVisible(st.StatusLbl, false)
+	end
+	updateCount(tableId)
+end
+
+local function resetTable(tableId)
+	local st = tableState[tableId]
+	if not st then return end
 	st.countdownToken += 1
-	st.playerCount = 0
-
-	if st.bb then st.bb.Enabled = true end
-	if st.CountLbl then st.CountLbl.Visible = true end
-	if st.WinLbl then st.WinLbl.Visible = true end
-	if st.CountdownLbl then st.CountdownLbl.Visible = false end
-	if st.StatusLbl and st.StatusLbl ~= st.CountdownLbl then st.StatusLbl.Visible = false end
-
-	updateCount(tid)
+	st.occupied.A = false
+	st.occupied.B = false
+	showDefault(tableId)
 end
 
-local function showDefaultWithoutReset(tid)
-	local st = tableState[tid]
-	if not st then return end
-
-	if st.bb then st.bb.Enabled = true end
-	if st.CountLbl then st.CountLbl.Visible = true end
-	if st.WinLbl then st.WinLbl.Visible = true end
-	if st.CountdownLbl then st.CountdownLbl.Visible = false end
-	if st.StatusLbl and st.StatusLbl ~= st.CountdownLbl then st.StatusLbl.Visible = false end
-
-	updateCount(tid)
-end
-
-local function playCountdownStep(tid, text)
-	local st = tableState[tid]
+local function playCountdownStep(st, text)
 	if not st or not st.CountdownLbl then return end
-
-	st.CountdownLbl.Text = text
-	st.CountdownLbl.TextTransparency = 0
+	setText(st.CountdownLbl, text)
+	pcall(function() st.CountdownLbl.TextTransparency = 0 end)
 
 	TweenService:Create(
 		st.CountdownLbl,
@@ -135,37 +147,33 @@ local function playCountdownStep(tid, text)
 	):Play()
 end
 
-local function showCountdown(tid, numberText)
-	local st = tableState[tid]
+local function showCountdown(tableId, text)
+	local st = tableState[tableId]
 	if not st then return end
-
 	if st.bb then st.bb.Enabled = true end
-	if st.CountLbl then st.CountLbl.Visible = false end
-	if st.WinLbl then st.WinLbl.Visible = false end
-	if st.StatusLbl and st.StatusLbl ~= st.CountdownLbl then st.StatusLbl.Visible = false end
-	if st.CountdownLbl then
-		st.CountdownLbl.Visible = true
-		playCountdownStep(tid, numberText)
-	end
+	setVisible(st.CountLbl, false)
+	setVisible(st.WinLbl, false)
+	if st.StatusLbl and st.StatusLbl ~= st.CountdownLbl then setVisible(st.StatusLbl, false) end
+	setVisible(st.CountdownLbl, true)
+	playCountdownStep(st, text)
 end
 
-local function showGoAndHide(tid)
-	local st = tableState[tid]
+local function showGoAndHide(tableId)
+	local st = tableState[tableId]
 	if not st then return end
+
 	local token = st.countdownToken + 1
 	st.countdownToken = token
 
 	if st.bb then st.bb.Enabled = true end
-	if st.CountdownLbl then
-		st.CountdownLbl.Visible = true
-		playCountdownStep(tid, "🌍 GO!")
-	end
+	setVisible(st.CountdownLbl, true)
+	playCountdownStep(st, "🌍 GO!")
 
 	task.delay(0.75, function()
-		local current = tableState[tid]
+		local current = tableState[tableId]
 		if not current or current.countdownToken ~= token then return end
 		if current.bb then current.bb.Enabled = false end
-		if current.CountdownLbl then current.CountdownLbl.Visible = false end
+		setVisible(current.CountdownLbl, false)
 	end)
 end
 
@@ -175,27 +183,41 @@ for _, model in ipairs(TablesFolder:GetChildren()) do
 	end
 end
 
-for tid, _ in pairs(tableState) do
-	resetBillboard(tid)
+for id in pairs(tableState) do
+	resetTable(id)
 end
 
-PlayerSat.OnClientEvent:Connect(function(_slot, _name, tableId)
+PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
 	local tid = tableId or getClosestTableId()
-	if not tid then return end
-	local st = tableState[tid]
+	local st = tid and tableState[tid] or nil
 	if not st then return end
 
-	st.playerCount = math.min(st.playerCount + 1, 2)
+	if slot == "A" or slot == "B" then
+		st.occupied[slot] = true
+	else
+		-- fallback if slot was not sent as A/B
+		local count = getCount(st)
+		if count == 0 then st.occupied.A = true else st.occupied.B = true end
+	end
+
 	updateCount(tid)
 end)
 
-PlayerStood.OnClientEvent:Connect(function(_slot, _name, tableId)
+PlayerStood.OnClientEvent:Connect(function(slot, _name, tableId)
 	local tid = tableId or getClosestTableId()
-	if not tid then return end
-	resetBillboard(tid)
+	local st = tid and tableState[tid] or nil
+	if not st then return end
+
+	if slot == "A" or slot == "B" then
+		st.occupied[slot] = false
+	else
+		st.occupied.A = false
+		st.occupied.B = false
+	end
+
+	showDefault(tid)
 end)
 
--- Preferred countdown path from server.
 TableCountdown.OnClientEvent:Connect(function(tableId, t)
 	local st = tableState[tableId]
 	if not st then return end
@@ -213,18 +235,16 @@ TableStatus.OnClientEvent:Connect(function(tableId, text)
 
 	local msg = tostring(text or "")
 	if msg == "" then
-		showDefaultWithoutReset(tableId)
+		showDefault(tableId)
 		return
 	end
 
 	if st.bb then st.bb.Enabled = true end
-	if st.CountLbl then st.CountLbl.Visible = false end
-	if st.WinLbl then st.WinLbl.Visible = false end
-	if st.CountdownLbl then st.CountdownLbl.Visible = false end
-	if st.StatusLbl then
-		st.StatusLbl.Visible = true
-		st.StatusLbl.Text = msg
-	end
+	setVisible(st.CountLbl, false)
+	setVisible(st.WinLbl, false)
+	setVisible(st.CountdownLbl, false)
+	setVisible(st.StatusLbl, true)
+	setText(st.StatusLbl, msg)
 end)
 
-print("[TableBillboard] Multi-table Ready")
+print("[TableBillboard] Multi-table ready")
