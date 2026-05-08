@@ -336,16 +336,49 @@ E.ShowLetterPick.OnClientEvent:Connect(function()
 	openLetterPick()
 end)
 
-E.ShowCountryPick.OnClientEvent:Connect(function(letter, list)
+E.ShowCountryPick.OnClientEvent:Connect(function(arg1, arg2)
 	if not iAmSeated then return end
-	hideAll(); hideGuessingOverlay(); F.CPickF.Visible = true
-	local nl = string.upper(tostring(letter or ""))
-	local ll = CountryData.ByLetter[nl] or {}
-	local countries = mergeCountryLists(ll, list)
-	debugCountryList("CountryPick", nl, list, ll, countries)
+
+	hideAll()
+	hideGuessingOverlay()
+	F.CPickF.Visible = true
+
+	-- Supports both server styles:
+	-- 1) FireClient(player, letter, list)
+	-- 2) FireClient(player, { letter = "...", countries = {...} })
+	local letter
+	local serverList
+
+	if type(arg1) == "table" then
+		letter = arg1.letter or arg1.Letter
+		serverList = arg1.countries or arg1.Countries or arg1.list or arg1.List
+	else
+		letter = arg1
+		serverList = arg2
+	end
+
+	letter = string.upper(tostring(letter or ""))
+	if #letter > 1 then
+		letter = string.sub(letter, 1, 1)
+	end
+
+	local localList = CountryData.ByLetter[letter] or {}
+	local countries = mergeCountryLists(localList, serverList)
+
+	debugCountryList("CountryPick", letter, serverList, localList, countries)
+
+	if #countries == 0 then
+		F.WaitF.Visible = true
+		F.WaitLbl.Text = "No countries found for letter " .. tostring(letter) .. "."
+		return
+	end
+
 	buildCountryList(F.CPickScroll, countries, function(countryName)
-		disableAll(F.CPickScroll); E.CountryChosen:FireServer(countryName)
-		hideAll(); F.WaitF.Visible = true; F.WaitLbl.Text = "Secret country chosen"
+		disableAll(F.CPickScroll)
+		E.CountryChosen:FireServer(countryName)
+		hideAll()
+		F.WaitF.Visible = true
+		F.WaitLbl.Text = "Secret country chosen"
 		if _G.GoWideShot then _G.GoWideShot(0.8) end
 	end, "CountryPick")
 end)
