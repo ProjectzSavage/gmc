@@ -238,23 +238,6 @@ local function getClosestTableModel()
 	return best
 end
 
-local activeTable = getClosestTableModel()
-local SeatA = activeTable and activeTable:FindFirstChild("SeatA")
-local SeatB = activeTable and activeTable:FindFirstChild("SeatB")
-
-local function watchSeat(part, slot)
-	task.spawn(function()
-		local prompt = part:FindFirstChildOfClass("ProximityPrompt")
-		if not prompt then
-			local conn; conn = part.ChildAdded:Connect(function(c) if c:IsA("ProximityPrompt") then prompt = c; conn:Disconnect() end end)
-			local w = 0; while not prompt and w < 10 do task.wait(0.1); w += 0.1 end
-		end
-		if not prompt then return end
-		prompt.Triggered:Connect(function(tp) if tp == player then E.RequestSit:FireServer(slot) end end)
-	end)
-end
-watchSeat(SeatA, "A"); watchSeat(SeatB, "B")
-
 UIS.JumpRequest:Connect(function()
 	if iAmSeated and not jumpLocked then E.RequestStand:FireServer() end
 end)
