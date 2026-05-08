@@ -1,219 +1,182 @@
--- GameManager - v2026-04-18 Update 7 FIXED
+-- Multi-table GameManager (independent 1v1 sessions per table)
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Events = RS:WaitForChild("Events")
-local CountryData = require(RS:WaitForChild("CountryData"))
-local SetHeadTagsVisible = Events:WaitForChild("SetHeadTagsVisible")
+local events = ReplicatedStorage:WaitForChild("Events")
+local CountryData = require(ReplicatedStorage:WaitForChild("CountryData"))
 
-local function ensureEvent(name)
-	local e = Events:FindFirstChild(name)
-	if e then return e end
-	e = Instance.new("RemoteEvent")
-	e.Name = name
-	e.Parent = Events
-	return e
+local function event(name)
+	return events:WaitForChild(name)
 end
 
-local TableCountdown = ensureEvent("TableCountdown")
-local TableStatus = ensureEvent("TableStatus")
-
 local E = {
-	ShowLetterPick = Events:WaitForChild("ShowLetterPick"),
-	LetterChosen = Events:WaitForChild("LetterChosen"),
-	ShowCountryPick = Events:WaitForChild("ShowCountryPick"),
-	CountryChosen = Events:WaitForChild("CountryChosen"),
-	ShowLetterGuess = Events:WaitForChild("ShowLetterGuess"),
-	SubmitLetterGuess = Events:WaitForChild("SubmitLetterGuess"),
-	LetterGuessResult = Events:WaitForChild("LetterGuessResult"),
-	ShowCountryGuess = Events:WaitForChild("ShowCountryGuess"),
-	SubmitCountryGuess = Events:WaitForChild("SubmitCountryGuess"),
-	CountryGuessResult = Events:WaitForChild("CountryGuessResult"),
-	ShowWait = Events:WaitForChild("ShowWait"),
-	ShowBillboard = Events:WaitForChild("ShowBillboard"),
-	TimerTick = Events:WaitForChild("TimerTick"),
-	GameOver = Events:WaitForChild("GameOver"),
-	ResetAll = Events:WaitForChild("ResetAll"),
+	ShowLetterPick = event("ShowLetterPick"),
+	LetterChosen = event("LetterChosen"),
+	ShowCountryPick = event("ShowCountryPick"),
+	CountryChosen = event("CountryChosen"),
+	ShowLetterGuess = event("ShowLetterGuess"),
+	SubmitLetterGuess = event("SubmitLetterGuess"),
+	LetterGuessResult = event("LetterGuessResult"),
+	ShowCountryGuess = event("ShowCountryGuess"),
+	SubmitCountryGuess = event("SubmitCountryGuess"),
+	CountryGuessResult = event("CountryGuessResult"),
+	ShowWait = event("ShowWait"),
+	ShowBillboard = event("ShowBillboard"),
+	TimerTick = event("TimerTick"),
+	GameOver = event("GameOver"),
+	ResetAll = event("ResetAll"),
+	TableCountdown = event("TableCountdown"),
+	TableStatus = event("TableStatus"),
 }
 
 local CFG = {
 	COUNTDOWN_START = 3,
-	POST_COUNTDOWN_DELAY = 0,
-	START_AFTER_PICK_DELAY = 0.7,
 	TURN_TIME = 60,
-	ASK_TO_RESPONSE_DELAY = 1.35,
-	RESPONSE_DISPLAY_TIME = 2.0,
-	TURN_SWITCH_BUFFER = 0.75,
+	TURN_SWITCH_DELAY = 1.2,
 }
 
-local REWARDS = {
-	WinCash = 200,
-	WinIncrease = 1,
-	WinstreakIncrease = 1,
-}
-
-local TEXT = {
-	AskLetter = "Is your letter %s?",
-	AskCountry = "Is your country %s?",
-	Guessing = "Guessing",
-	BothReady = "Both players are ready",
-	Higher = "HIGHER",
-	Lower = "LOWER",
-	Yes = "YES",
-	No = "NO",
-	Timeout = "TIME UP",
-}
-
-local session = nil
+local sessions = {}
+local playerToTable = {}
 
 local function countryListForLetter(letter)
 	local list = CountryData.ByLetter[string.upper(letter or "")]
-	if type(list) == "table" then return list end
+	if type(list) == "table" then
+		return list
+	end
 	return {}
 end
 
-local function listNames(list)
-	local out = {}
-	for i, c in ipairs(list) do
-		if i > 20 then break end
-		table.insert(out, c.name or "?")
-	end
-	return table.concat(out, ", ")
-end
-
-local function getOtherPlayer(s, p)
-	if p == s.playerA then return s.playerB end
-	if p == s.playerB then return s.playerA end
-	return nil
-end
-
-local function getPlayerById(s, userId)
-	if s.playerA and s.playerA.UserId == userId then return s.playerA end
-	if s.playerB and s.playerB.UserId == userId then return s.playerB end
-	return nil
-end
-
-local function isParticipant(s, p)
-	return p and (p == s.playerA or p == s.playerB)
-end
-
-local function bumpToken(s)
-	s.token += 1
-	return s.token
-end
-
-local function resetSession()
-	if session and session.active then
-		session.active = false
-		bumpToken(session)
-		E.ResetAll:FireAllClients()
-	end
-	-- Restore head tags and prompts
-	if session and session.playerA and session.playerB then
-		SetHeadTagsVisible:FireAllClients({session.playerA.Name, session.playerB.Name}, true)
-	end
-	if _G.SeatManager and _G.SeatManager.setPromptsEnabled then
-		_G.SeatManager.setPromptsEnabled(true)
-	end
-	session = nil
-	_G.CurrentGameSession = nil
-end
-
--- FIX: was checking `cash:IsA` instead of `wins:IsA`
-local function awardWinner(player)
-	if not player then return end
-	local stats = player:FindFirstChild("leaderstats")
-	if not stats then return end
-
-	local cash = stats:FindFirstChild("Cash")
-	local wins = stats:FindFirstChild("Wins")
-	local winstreak = stats:FindFirstChild("Winstreak")
-
-	if cash and cash:IsA("IntValue") then
-		cash.Value += REWARDS.WinCash
-	end
-	if wins and wins:IsA("IntValue") then
-		wins.Value += REWARDS.WinIncrease
-	end
-	if winstreak and winstreak:IsA("IntValue") then
-		winstreak.Value += REWARDS.WinstreakIncrease
-	end
-end
-
-local function resetPlayerStreak(player)
-	if not player then return end
-	local stats = player:FindFirstChild("leaderstats")
-	local winstreak = stats and stats:FindFirstChild("Winstreak")
-	if winstreak and winstreak:IsA("IntValue") then winstreak.Value = 0 end
-end
-
-local function eliminateLoserOnly(s, winnerPlayer)
-	local loser = getOtherPlayer(s, winnerPlayer)
-	if not loser then return end
-	local char = loser.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum and hum.Health > 0 then hum.Health = 0 end
-end
-
-local function standWinnerOnly(s, winnerPlayer)
-	if not _G.SeatManager or not _G.SeatManager.getSeats or not _G.SeatManager.standSlot then return end
-	if typeof(winnerPlayer) ~= "Instance" then return end
-	local seats = _G.SeatManager.getSeats()
-	for slot, data in pairs(seats) do
-		if data.player == winnerPlayer then
-			_G.SeatManager.standSlot(slot)
-			break
+local function countryExistsForLetter(letter, countryName)
+	local list = countryListForLetter(letter)
+	local target = string.lower(tostring(countryName or ""))
+	for _, entry in ipairs(list) do
+		if string.lower(entry.name) == target then
+			return true
 		end
 	end
+	return false
 end
 
-local function endWithWinner(s, winnerPlayer)
-	if not s or not s.active then return end
-	if s.ending then return end
-	s.ending = true
-	local winnerName = typeof(winnerPlayer) == "Instance" and winnerPlayer.Name or tostring(winnerPlayer or "Unknown")
+local function getOtherPlayer(session, player)
+	if player == session.playerA then return session.playerB end
+	if player == session.playerB then return session.playerA end
+	return nil
+end
 
-	if typeof(winnerPlayer) == "Instance" then
-		awardWinner(winnerPlayer)
-		local loser = getOtherPlayer(s, winnerPlayer)
-		resetPlayerStreak(loser)
+local function getSecret(session, player)
+	return session.secret[player.UserId]
+end
+
+local function fireBoth(session, remote, payload)
+	if session.playerA then remote:FireClient(session.playerA, payload) end
+	if session.playerB then remote:FireClient(session.playerB, payload) end
+end
+
+local function setTableStatus(tableId, text)
+	E.TableStatus:FireAllClients(tableId, text)
+end
+
+local function setTableCountdown(tableId, value)
+	E.TableCountdown:FireAllClients(tableId, value)
+end
+
+local function clearSession(tableId)
+	local session = sessions[tableId]
+	if not session then return end
+
+	sessions[tableId] = nil
+	if session.playerA then playerToTable[session.playerA.UserId] = nil end
+	if session.playerB then playerToTable[session.playerB.UserId] = nil end
+
+	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
+		_G.SeatManager.setTablePromptEnabled(tableId, true)
 	end
 
-	s.active = false
-	bumpToken(s)
-	-- Only fire to participants
-	if s.playerA then E.GameOver:FireClient(s.playerA, { winner = winnerName, rewardCash = REWARDS.WinCash }) end
-	if s.playerB then E.GameOver:FireClient(s.playerB, { winner = winnerName, rewardCash = REWARDS.WinCash }) end
-
-	task.delay(0.25, function() standWinnerOnly(s, winnerPlayer) end)
-	task.delay(1.2, function()
-		if s.active then return end
-		eliminateLoserOnly(s, winnerPlayer)
-	end)
-	task.delay(1.5, function() resetSession() end)
+	setTableStatus(tableId, "")
+	setTableCountdown(tableId, 0)
 end
 
-local switchToOtherTurn
+local function endSessionWithWinner(tableId, winner, reason)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	if session.ending then return end
+	session.ending = true
+	session.active = false
+	session.token += 1
 
-local function startTurnTimer(s, token, turnPlayer)
+	local loser = getOtherPlayer(session, winner)
+	fireBoth(session, E.GameOver, {
+		winner = winner and winner.Name or "Unknown",
+		reason = reason or "",
+		rewardCash = 200,
+	})
+
+	task.delay(1.25, function()
+		if _G.SeatManager and _G.SeatManager.standPlayer then
+			if winner then _G.SeatManager.standPlayer(winner) end
+			if loser then _G.SeatManager.standPlayer(loser) end
+		end
+		clearSession(tableId)
+	end)
+end
+
+local function switchTurn(session)
+	local current = session.turnPlayer
+	session.turnPlayer = getOtherPlayer(session, current)
+	session.mode = "letter"
+end
+
+local function openTurn(session)
+	if not session.active then return end
+	local turnPlayer = session.turnPlayer
+	local other = getOtherPlayer(session, turnPlayer)
+	if not turnPlayer or not other then return end
+
+	local mySecret = getSecret(session, turnPlayer)
+	local oppSecret = getSecret(session, other)
+	if not mySecret or not oppSecret then return end
+
+	session.phase = "turn"
+	session.token += 1
+	local token = session.token
+
+	E.ShowWait:FireClient(other, { text = turnPlayer.Name .. " is guessing..." })
+	E.ShowBillboard:FireClient(other, { text = turnPlayer.Name .. " turn" })
+
+	if session.mode == "letter" then
+		E.ShowLetterGuess:FireClient(turnPlayer, {
+			eliminatedMin = mySecret.elimMin,
+			eliminatedMax = mySecret.elimMax,
+			turnTime = CFG.TURN_TIME,
+		})
+	else
+		local wrong = {}
+		for countryName, state in pairs(mySecret.wrongCountries) do
+			if state then table.insert(wrong, countryName) end
+		end
+		table.sort(wrong)
+		E.ShowCountryGuess:FireClient(turnPlayer, {
+			letter = oppSecret.letter,
+			wrongCountries = wrong,
+			turnTime = CFG.TURN_TIME,
+		})
+	end
+
 	task.spawn(function()
 		for t = CFG.TURN_TIME, 1, -1 do
-			if not s.active or s.token ~= token or s.turnUserId ~= turnPlayer.UserId then return end
+			if not session.active or session.token ~= token then return end
 			E.TimerTick:FireClient(turnPlayer, t)
 			task.wait(1)
 		end
 
-		if not s.active or s.token ~= token or s.turnUserId ~= turnPlayer.UserId then return end
+		if not session.active or session.token ~= token then return end
 
-		local resolveToken = bumpToken(s)
-		s.phase = "resolving"
-
-		if s.mode == "letter" then
+		if session.mode == "letter" then
 			E.LetterGuessResult:FireClient(turnPlayer, {
 				result = "timeout",
 				message = "TIMEOUT",
-				eliminatedMin = s.secret[turnPlayer.UserId].elimMin,
-				eliminatedMax = s.secret[turnPlayer.UserId].elimMax,
+				eliminatedMin = mySecret.elimMin,
+				eliminatedMax = mySecret.elimMax,
 			})
 		else
 			E.CountryGuessResult:FireClient(turnPlayer, {
@@ -222,329 +185,269 @@ local function startTurnTimer(s, token, turnPlayer)
 			})
 		end
 
-		task.delay(CFG.RESPONSE_DISPLAY_TIME + CFG.TURN_SWITCH_BUFFER, function()
-			if not s.active or s.token ~= resolveToken then return end
-			switchToOtherTurn(s, turnPlayer, "after timeout")
+		switchTurn(session)
+		task.delay(CFG.TURN_SWITCH_DELAY, function()
+			if session.active then
+				openTurn(session)
+			end
 		end)
 	end)
 end
 
-local function newWrongList(map)
-	local out = {}
-	for name, v in pairs(map) do
-		if v then table.insert(out, name) end
-	end
-	table.sort(out)
-	return out
+local function startGame(tableId)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+
+	local a = session.secret[session.playerA.UserId]
+	local b = session.secret[session.playerB.UserId]
+	if not (a and b and a.country and b.country) then return end
+
+	session.turnPlayer = math.random(1, 2) == 1 and session.playerA or session.playerB
+	session.mode = "letter"
+	session.phase = "turn"
+
+	setTableStatus(tableId, "In match")
+	openTurn(session)
 end
 
-switchToOtherTurn = function(s, currentPlayer, reason)
-	if not s or not s.active then return end
-	local other = getOtherPlayer(s, currentPlayer)
-	if not other then return end
-	s.turnUserId = other.UserId
-	s.mode = nil
-	print("[GM][NextTurn] " .. tostring(reason or "switch") .. " -> " .. other.Name)
-	s.openTurnUI()
-end
+local function beginCountryPick(tableId)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
 
-local function openTurnUIFactory(s)
-	return function()
-		if not s.active then return end
+	session.phase = "country-pick"
 
-		local turnPlayer = getPlayerById(s, s.turnUserId)
-		if not turnPlayer then return end
-		local other = getOtherPlayer(s, turnPlayer)
-		if not other then return end
-
-		local mySecret = s.secret[turnPlayer.UserId]
-		local oppSecret = s.secret[other.UserId]
-		if not mySecret or not oppSecret then return end
-
-		local token = bumpToken(s)
-		-- Only fire billboard to participants
-		if s.playerA then E.ShowBillboard:FireClient(s.playerA, turnPlayer.Name, TEXT.Guessing, "white") end
-		if s.playerB then E.ShowBillboard:FireClient(s.playerB, turnPlayer.Name, TEXT.Guessing, "white") end
-
-		if mySecret.foundLetter then
-			s.phase = "guessCountry"
-			s.mode = "country"
-
-			local letter = string.upper(tostring(oppSecret.letter or ""))
-			local list = countryListForLetter(letter)
-			print("[GM][ShowCountryGuess] opponent=" .. other.Name .. " letter=" .. letter .. " count=" .. #list)
-			print("[GM][ShowCountryGuess] names=" .. listNames(list))
-
-			E.ShowCountryGuess:FireClient(turnPlayer, {
-				opponentName = other.Name,
-				letter = letter,
-				countries = list,
-				timeLeft = CFG.TURN_TIME,
-				wrongList = newWrongList(mySecret.wrongCountries),
-			})
-			-- Country hint for waiting player
-			local oppCountry2 = s.secret[other.UserId] and s.secret[other.UserId].country or "?"
-			E.ShowCountryGuess:FireClient(other, {
-				waiting = true,
-				opponentName = turnPlayer.Name,
-				message = turnPlayer.Name .. " is guessing your country...",
-				countryHint = oppCountry2,
-			})
-		else
-			s.phase = "guessLetter"
-			s.mode = "letter"
-			E.ShowLetterGuess:FireClient(turnPlayer, {
-				opponentName = other.Name,
-				timeLeft = CFG.TURN_TIME,
-				eliminatedMin = mySecret.elimMin,
-				eliminatedMax = mySecret.elimMax,
-			})
-			-- Country hint for waiting player
-			local oppCountry = s.secret[other.UserId] and s.secret[other.UserId].country or "?"
-			local focusSlot = (turnPlayer == s.playerA) and "A" or "B"
-			E.ShowWait:FireClient(other,
-				turnPlayer.Name .. " is guessing your letter...",
-				turnPlayer.Name, focusSlot, oppCountry)
-		end
-
-		startTurnTimer(s, token, turnPlayer)
+	for _, player in ipairs({ session.playerA, session.playerB }) do
+		local secret = getSecret(session, player)
+		E.ShowCountryPick:FireClient(player, {
+			letter = secret.letter,
+			countries = countryListForLetter(secret.letter),
+		})
 	end
 end
 
-local function runCountdownAndStart(s)
-	for t = CFG.COUNTDOWN_START, 1, -1 do
-		if not s.active then return end
-		TableCountdown:FireClient(s.playerA, t)
-		TableCountdown:FireClient(s.playerB, t)
-		task.wait(1)
-	end
+local function beginLetterPick(tableId)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	session.phase = "letter-pick"
 
-	if not s.active then return end
-	TableCountdown:FireClient(s.playerA, 0)
-	TableCountdown:FireClient(s.playerB, 0)
-	task.wait(CFG.POST_COUNTDOWN_DELAY)
-	if not s.active then return end
-
-	s.phase = "picking"
-	E.ShowLetterPick:FireClient(s.playerA)
-	E.ShowLetterPick:FireClient(s.playerB)
+	E.ShowLetterPick:FireClient(session.playerA)
+	E.ShowLetterPick:FireClient(session.playerB)
 end
 
-_G.OnBothSeated = function(playerA, playerB)
-	resetSession()
+local function createSession(tableId, playerA, playerB)
+	if sessions[tableId] then return end
 
-	session = {
-		active = true,
+	local session = {
+		tableId = tableId,
 		playerA = playerA,
 		playerB = playerB,
-		turnUserId = playerA.UserId,
-		phase = "picking",
-		mode = nil,
+		active = true,
+		ending = false,
 		token = 0,
-		letterPicked = {},
-		countryPicked = {},
+		phase = "countdown",
+		turnPlayer = nil,
+		mode = "letter",
 		secret = {
-			[playerA.UserId] = { letter = nil, country = nil, foundLetter = false, elimMin = 0, elimMax = 27, wrongCountries = {} },
-			[playerB.UserId] = { letter = nil, country = nil, foundLetter = false, elimMin = 0, elimMax = 27, wrongCountries = {} },
+			[playerA.UserId] = { letter = nil, country = nil, elimMin = 0, elimMax = 27, wrongCountries = {} },
+			[playerB.UserId] = { letter = nil, country = nil, elimMin = 0, elimMax = 27, wrongCountries = {} },
 		},
 	}
 
-	_G.CurrentGameSession = session
+	sessions[tableId] = session
+	playerToTable[playerA.UserId] = tableId
+	playerToTable[playerB.UserId] = tableId
 
-	-- Hide tags + disable prompts
-	SetHeadTagsVisible:FireAllClients({playerA.Name, playerB.Name}, false)
-	if _G.SeatManager and _G.SeatManager.setPromptsEnabled then
-		_G.SeatManager.setPromptsEnabled(false)
+	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
+		_G.SeatManager.setTablePromptEnabled(tableId, false)
 	end
 
-	session.openTurnUI = openTurnUIFactory(session)
-	task.spawn(runCountdownAndStart, session)
+	setTableStatus(tableId, "Both players are ready")
+
+	task.spawn(function()
+		for t = CFG.COUNTDOWN_START, 1, -1 do
+			if not session.active then return end
+			setTableCountdown(tableId, t)
+			task.wait(1)
+		end
+		setTableCountdown(tableId, 0)
+		beginLetterPick(tableId)
+	end)
 end
 
-_G.OnPlayerStood = function(player)
-	if session and isParticipant(session, player) then
-		if session.ending then return end
-		if session.phase ~= "picking" then
-			local other = getOtherPlayer(session, player)
-			if other then
-				endWithWinner(session, other)
-				return
-			end
-		end
-		resetSession()
-	end
+_G.OnBothSeated = function(tableId, playerA, playerB)
+	createSession(tableId, playerA, playerB)
 end
 
-Players.PlayerRemoving:Connect(function(player)
-	if session and isParticipant(session, player) then
-		if session.ending then return end
-		if session.phase ~= "picking" then
-			local other = getOtherPlayer(session, player)
-			if other then endWithWinner(session, other); return end
-		end
-		resetSession()
+_G.OnPlayerStood = function(player, tableId)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+
+	local other = getOtherPlayer(session, player)
+	if other then
+		endSessionWithWinner(tableId, other, "opponent_left")
+	else
+		clearSession(tableId)
 	end
-end)
+end
 
 E.LetterChosen.OnServerEvent:Connect(function(player, letter)
-	local s = session
-	if not s or not s.active or s.phase ~= "picking" then return end
-	if not isParticipant(s, player) then return end
-	if s.letterPicked[player.UserId] then return end
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active or session.phase ~= "letter-pick" then return end
 
-	letter = string.upper(tostring(letter or ""))
-	if #letter ~= 1 then return end
+	local secret = getSecret(session, player)
+	if not secret then return end
 
 	local list = countryListForLetter(letter)
 	if #list == 0 then return end
 
-	s.secret[player.UserId].letter = letter
-	s.letterPicked[player.UserId] = true
-	E.ShowCountryPick:FireClient(player, letter, list)
+	secret.letter = string.upper(letter)
+
+	local aDone = getSecret(session, session.playerA).letter ~= nil
+	local bDone = getSecret(session, session.playerB).letter ~= nil
+	if aDone and bDone then
+		beginCountryPick(tableId)
+	end
 end)
 
 E.CountryChosen.OnServerEvent:Connect(function(player, countryName)
-	local s = session
-	if not s or not s.active or s.phase ~= "picking" then return end
-	if not isParticipant(s, player) then return end
-	if not s.letterPicked[player.UserId] or s.countryPicked[player.UserId] then return end
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active or session.phase ~= "country-pick" then return end
 
-	local letter = s.secret[player.UserId].letter
-	if not letter then return end
+	local secret = getSecret(session, player)
+	if not secret or not secret.letter then return end
 
-	local chosen = nil
-	for _, c in ipairs(countryListForLetter(letter)) do
-		if string.lower(c.name) == string.lower(tostring(countryName)) then
-			chosen = c.name
-			break
-		end
-	end
-	if not chosen then return end
+	if not countryExistsForLetter(secret.letter, countryName) then return end
+	secret.country = countryName
 
-	s.secret[player.UserId].country = chosen
-	s.countryPicked[player.UserId] = true
-
-	if s.countryPicked[s.playerA.UserId] and s.countryPicked[s.playerB.UserId] then
-		TableStatus:FireAllClients(TEXT.BothReady)
-		local GuessPhaseStart = ensureEvent("GuessPhaseStart")
-		GuessPhaseStart:FireClient(s.playerA)
-		GuessPhaseStart:FireClient(s.playerB)
-		task.delay(CFG.START_AFTER_PICK_DELAY, function()
-			if not s.active or s.phase ~= "picking" then return end
-			TableStatus:FireAllClients("")
-			s.openTurnUI()
-		end)
+	local aDone = getSecret(session, session.playerA).country ~= nil
+	local bDone = getSecret(session, session.playerB).country ~= nil
+	if aDone and bDone then
+		startGame(tableId)
 	end
 end)
 
-E.SubmitLetterGuess.OnServerEvent:Connect(function(player, letter)
-	local s = session
-	if not s or not s.active or s.phase ~= "guessLetter" then return end
-	if s.turnUserId ~= player.UserId then return end
+E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	if session.phase ~= "turn" or session.mode ~= "letter" then return end
+	if session.turnPlayer ~= player then return end
 
-	local other = getOtherPlayer(s, player)
-	if not other then return end
+	local other = getOtherPlayer(session, player)
+	local mySecret = getSecret(session, player)
+	local oppSecret = getSecret(session, other)
+	if not (mySecret and oppSecret and oppSecret.letter) then return end
 
-	local mySecret = s.secret[player.UserId]
-	local oppSecret = s.secret[other.UserId]
-	if not mySecret or not oppSecret or not oppSecret.letter then return end
+	session.token += 1
 
-	letter = string.upper(tostring(letter or ""))
-	if #letter ~= 1 then return end
+	local guessed = string.byte(string.upper(guessLetter)) - 64
+	local actual = string.byte(oppSecret.letter) - 64
 
-	local guessIdx = string.byte(letter) - 64
-	local targetIdx = string.byte(oppSecret.letter) - 64
-	if guessIdx < 1 or guessIdx > 26 then return end
-
-	local token = bumpToken(s)
-	s.phase = "resolving"
-
-	E.ShowBillboard:FireAllClients(player.Name, string.format(TEXT.AskLetter, letter), "white")
-
-	task.delay(CFG.ASK_TO_RESPONSE_DELAY, function()
-		if not s.active or s.token ~= token then return end
-
-		local result, msg, colorName
-		if guessIdx == targetIdx then
-			result = "yes"
-			msg = TEXT.Yes
-			colorName = "green"
-			mySecret.foundLetter = true
-		elseif guessIdx < targetIdx then
-			result = "higher"
-			msg = TEXT.Higher
-			colorName = "yellow"
-			mySecret.elimMin = math.max(mySecret.elimMin, guessIdx)
-		else
-			result = "lower"
-			msg = TEXT.Lower
-			colorName = "yellow"
-			mySecret.elimMax = math.min(mySecret.elimMax, guessIdx)
-		end
-
-		print("[GM][LetterResult] guess=" .. letter .. " target=" .. oppSecret.letter .. " result=" .. msg)
-		E.ShowBillboard:FireAllClients(other.Name, msg, colorName)
+	if guessed == actual then
 		E.LetterGuessResult:FireClient(player, {
-			result = result,
-			letter = letter,
-			message = msg,
+			result = "correct",
+			message = "YES",
 			eliminatedMin = mySecret.elimMin,
 			eliminatedMax = mySecret.elimMax,
 		})
-
-		task.delay(CFG.RESPONSE_DISPLAY_TIME + CFG.TURN_SWITCH_BUFFER, function()
-			if not s.active or s.token ~= token then return end
-			switchToOtherTurn(s, player, "after letter guess")
+		session.mode = "country"
+		task.delay(0.8, function()
+			if session.active then
+				openTurn(session)
+			end
 		end)
-	end)
-end)
+		return
+	end
 
-E.SubmitCountryGuess.OnServerEvent:Connect(function(player, countryName)
-	local s = session
-	if not s or not s.active or s.phase ~= "guessCountry" then return end
-	if s.turnUserId ~= player.UserId then return end
+	local message
+	if guessed < actual then
+		mySecret.elimMin = math.max(mySecret.elimMin, guessed)
+		message = "HIGHER"
+	else
+		mySecret.elimMax = math.min(mySecret.elimMax, guessed)
+		message = "LOWER"
+	end
 
-	local other = getOtherPlayer(s, player)
-	if not other then return end
+	E.LetterGuessResult:FireClient(player, {
+		result = "wrong",
+		message = message,
+		eliminatedMin = mySecret.elimMin,
+		eliminatedMax = mySecret.elimMax,
+	})
 
-	local mySecret = s.secret[player.UserId]
-	local oppSecret = s.secret[other.UserId]
-	if not mySecret or not oppSecret or not oppSecret.country then return end
-
-	local guess = tostring(countryName or "")
-	local correct = string.lower(guess) == string.lower(oppSecret.country)
-	local token = bumpToken(s)
-	s.phase = "resolving"
-
-	E.ShowBillboard:FireAllClients(player.Name, string.format(TEXT.AskCountry, guess), "white")
-
-	task.delay(CFG.ASK_TO_RESPONSE_DELAY, function()
-		if not s.active or s.token ~= token then return end
-
-		if correct then
-			print("[GM][CountryResult] guess=" .. guess .. " target=" .. oppSecret.country .. " result=" .. TEXT.Yes)
-			E.ShowBillboard:FireAllClients(other.Name, TEXT.Yes, "green")
-			E.CountryGuessResult:FireClient(player, { result = "yes", message = TEXT.Yes })
-			task.delay(CFG.RESPONSE_DISPLAY_TIME, function()
-				if not s.active or s.token ~= token then return end
-				endWithWinner(s, player)
-			end)
-			return
+	switchTurn(session)
+	task.delay(CFG.TURN_SWITCH_DELAY, function()
+		if session.active then
+			openTurn(session)
 		end
-
-		print("[GM][CountryResult] guess=" .. guess .. " target=" .. oppSecret.country .. " result=" .. TEXT.No)
-		mySecret.wrongCountries[guess] = true
-		E.ShowBillboard:FireAllClients(other.Name, TEXT.No, "red")
-		E.CountryGuessResult:FireClient(player, {
-			result = "no",
-			message = TEXT.No,
-			wrongName = guess,
-		})
-		task.delay(CFG.RESPONSE_DISPLAY_TIME + CFG.TURN_SWITCH_BUFFER, function()
-			if not s.active or s.token ~= token then return end
-			switchToOtherTurn(s, player, "after country guess")
-		end)
 	end)
 end)
 
-print("[GameManager] Ready")
+E.SubmitCountryGuess.OnServerEvent:Connect(function(player, guessCountry)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+	if session.phase ~= "turn" or session.mode ~= "country" then return end
+	if session.turnPlayer ~= player then return end
+
+	local other = getOtherPlayer(session, player)
+	local mySecret = getSecret(session, player)
+	local oppSecret = getSecret(session, other)
+	if not (mySecret and oppSecret and oppSecret.country) then return end
+
+	session.token += 1
+	if string.lower(guessCountry) == string.lower(oppSecret.country) then
+		E.CountryGuessResult:FireClient(player, {
+			result = "correct",
+			message = "YES",
+		})
+		endSessionWithWinner(tableId, player, "country_guessed")
+		return
+	end
+
+	mySecret.wrongCountries[guessCountry] = true
+
+	local wrongList = {}
+	for name, used in pairs(mySecret.wrongCountries) do
+		if used then table.insert(wrongList, name) end
+	end
+	table.sort(wrongList)
+
+	E.CountryGuessResult:FireClient(player, {
+		result = "wrong",
+		message = "NO",
+		wrongCountries = wrongList,
+	})
+
+	switchTurn(session)
+	task.delay(CFG.TURN_SWITCH_DELAY, function()
+		if session.active then
+			openTurn(session)
+		end
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return end
+	local session = sessions[tableId]
+	if not session then
+		playerToTable[player.UserId] = nil
+		return
+	end
+
+	local other = getOtherPlayer(session, player)
+	if other then
+		endSessionWithWinner(tableId, other, "opponent_left")
+	else
+		clearSession(tableId)
+	end
+end)
+
+print("[GameManager] Multi-table mode ready")
