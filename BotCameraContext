@@ -1,0 +1,14 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local events = RS:WaitForChild("Events")
+local BotCameraFocus = events:WaitForChild("BotCameraFocus")
+
+_G.ActiveBotTableId = nil
+
+BotCameraFocus.OnClientEvent:Connect(function(tableId)
+	_G.ActiveBotTableId = tableId
+end)
+
+print("[BotCameraContext] Ready")
