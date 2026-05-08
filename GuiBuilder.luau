@@ -90,9 +90,57 @@ end
 normalizeLetterGrid(LPickGrid)
 normalizeLetterGrid(LGuessGrid)
 
-local Table = workspace:WaitForChild("Table")
-local SeatA = Table:WaitForChild("SeatA")
-local SeatB = Table:WaitForChild("SeatB")
+local TablesFolder = workspace:WaitForChild("Tables")
+
+local function getClosestTableModel()
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return TablesFolder:FindFirstChildWhichIsA("Model")
+	end
+
+	local bestModel = nil
+	local bestDistance = math.huge
+
+	for _, model in ipairs(TablesFolder:GetChildren()) do
+		if model:IsA("Model") then
+			local top = model:FindFirstChild("TableTop")
+			if top and top:IsA("BasePart") then
+				local dist = (top.Position - root.Position).Magnitude
+				if dist < bestDistance then
+					bestDistance = dist
+					bestModel = model
+				end
+			end
+		end
+	end
+
+	return bestModel
+end
+
+local function getActiveSeats()
+	local model = getClosestTableModel()
+	if not model then return nil, nil end
+
+	local seatA = model:FindFirstChild("SeatA")
+	local seatB = model:FindFirstChild("SeatB")
+	if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
+		return seatA, seatB
+	end
+
+	return nil, nil
+end
+
+local function getActiveSeats()
+	local model = getClosestTableModel()
+	if not model then return nil, nil end
+	local seatA = model:FindFirstChild("SeatA")
+	local seatB = model:FindFirstChild("SeatB")
+	if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
+		return seatA, seatB
+	end
+	return nil, nil
+end
 
 local CAM = {
 	frontDistance = 13,
@@ -126,8 +174,13 @@ local function tweenCam(targetCF, fov, duration)
 end
 
 local function getWideCFrame()
-	local posA = SeatA.Position
-	local posB = SeatB.Position
+	local seatA, seatB = getActiveSeats()
+	if not seatA or not seatB then
+		return camera.CFrame
+	end
+
+	local posA = seatA.Position
+	local posB = seatB.Position
 	local center = (posA + posB) / 2
 	local row = (posB - posA).Unit
 	local forward = row:Cross(Vector3.new(0, 1, 0)).Unit
@@ -138,8 +191,13 @@ local function getWideCFrame()
 end
 
 local function getFaceCFrame(slot)
-	local seat = slot == "A" and SeatA or SeatB
-	local row = (SeatB.Position - SeatA.Position).Unit
+	local seatA, seatB = getActiveSeats()
+	if not seatA or not seatB then
+		return camera.CFrame
+	end
+
+	local seat = slot == "A" and seatA or seatB
+	local row = (seatB.Position - seatA.Position).Unit
 	local forward = row:Cross(Vector3.new(0, 1, 0)).Unit
 	if CAM.flip then forward = -forward end
 	local camPos = seat.Position + forward * CAM.faceDistance + Vector3.new(0, CAM.faceHeight, 0)
