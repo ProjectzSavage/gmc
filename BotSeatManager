@@ -25,7 +25,11 @@ local botTablesFolder = workspace:WaitForChild("BotTables")
 
 local botTables = {}
 local playerToTable = {}
-local lockedPlayers = {} -- true while active bot match (can't stand/jump-out)
+local lockedPlayers = {}
+
+local function toSharedBotId(tableId)
+	return "BOT:" .. tostring(tableId)
+end
 
 local function restoreMovement(h, hrp)
 	if h then
@@ -102,14 +106,13 @@ local function standPlayer(player)
 	lockedPlayers[player.UserId] = nil
 	setPromptEnabled(st, true)
 
-	PlayerStood:FireAllClients("B", player.Name, tableId)
+	BotCameraFocus:FireClient(player, nil)
+	PlayerStood:FireAllClients("B", player.Name, toSharedBotId(tableId))
 	BotTableStood:FireAllClients(tableId, player.Name)
-	BotCameraFocus:FireClient(player, nil) -- clear camera override
 
 	if _G.OnBotStood then
 		_G.OnBotStood(player, tableId)
 	end
-
 	return true
 end
 
@@ -127,24 +130,22 @@ local function sitPlayer(player, tableId)
 
 	st.player = player
 	playerToTable[player.UserId] = tableId
-	lockedPlayers[player.UserId] = false -- lock starts once match begins
+	lockedPlayers[player.UserId] = false
 	setPromptEnabled(st, false)
 
 	if st.deadConn then st.deadConn:Disconnect() end
 	st.deadConn = h.Died:Connect(function()
-		if st.player == player then
-			standPlayer(player)
-		end
+		if st.player == player then standPlayer(player) end
 	end)
 
-	PlayerSat:FireAllClients("B", player.Name, tableId)
+	-- Fire focus first, then shared event, so camera context is ready before UI tween.
+	BotCameraFocus:FireClient(player, tableId)
+	PlayerSat:FireAllClients("B", player.Name, toSharedBotId(tableId))
 	BotTableSat:FireAllClients(tableId, player.Name)
-	BotCameraFocus:FireClient(player, tableId) -- force camera target table
 
 	if _G.OnBotSeated then
 		_G.OnBotSeated(tableId, player)
 	end
-
 	return true
 end
 
@@ -199,10 +200,7 @@ for _, child in ipairs(botTablesFolder:GetChildren()) do
 end
 
 RequestStand.OnServerEvent:Connect(function(player)
-	-- while bot game active, ignore stand requests
-	if lockedPlayers[player.UserId] then
-		return
-	end
+	if lockedPlayers[player.UserId] then return end
 	standPlayer(player)
 end)
 
@@ -232,8 +230,9 @@ _G.BotSeatManager = {
 		if st then setPromptEnabled(st, enabled) end
 	end,
 	setPlayerLocked = function(player, locked)
-		if not player then return end
-		lockedPlayers[player.UserId] = locked == true
+		if player then
+			lockedPlayers[player.UserId] = locked == true
+		end
 	end,
 	standPlayer = standPlayer,
 }
