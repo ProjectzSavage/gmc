@@ -154,12 +154,12 @@ local function buildLetterGrid(grid, onPick)
 end
 
 local function applyElim(grid, eMin, eMax)
-	eMin = tonumber(eMin) or 0
-	eMax = tonumber(eMax) or 27
+	local minN = tonumber(eMin) or 0
+	local maxN = tonumber(eMax) or 27
 
 	for i = 1, 26 do
 		local b = grid:FindFirstChild("L_" .. string.char(64 + i))
-		if b and (i <= eMin or i >= eMax) then
+		if b and (i <= minN or i >= maxN) then
 			b.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
 			b.TextColor3 = Color3.fromRGB(62, 62, 72)
 			b.TextStrokeTransparency = 1
@@ -268,16 +268,28 @@ E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName)
 end)
 
 E.TableCountdown.OnClientEvent:Connect(function(t)
-	if t and t > 0 then countdownDone = false; hideAll(); return end
-	countdownDone = true
-	if pendingShowLetterPick then pendingShowLetterPick = false; openLetterPick() end
-end)
-E.BotTableCountdown.OnClientEvent:Connect(function(_tableId, t)
-	if t and t > 0 then
+	local n = tonumber(t)
+	if n and n > 0 then
 		countdownDone = false
 		hideAll()
 		return
 	end
+
+	countdownDone = true
+	if pendingShowLetterPick then
+		pendingShowLetterPick = false
+		openLetterPick()
+	end
+end)
+
+E.BotTableCountdown.OnClientEvent:Connect(function(_tableId, t)
+	local n = tonumber(t)
+	if n and n > 0 then
+		countdownDone = false
+		hideAll()
+		return
+	end
+
 	countdownDone = true
 	if pendingShowLetterPick then
 		pendingShowLetterPick = false
@@ -391,32 +403,50 @@ end)
 
 E.ShowLetterGuess.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	hideAll(); hideGuessingOverlay()
+	hideAll()
+	hideGuessingOverlay()
+
 	myElimMin = tonumber(data.eliminatedMin) or 0
 	myElimMax = tonumber(data.eliminatedMax) or 27
+
 	F.LGuessF.Visible = true
-	F.LGuessTitle.Text = "Guess "..tostring(data.opponentName or "?").."'s letter"
-	F.LGuessFeedback.Text = "One guess per turn"; F.LGuessFeedback.TextColor3 = Color3.fromRGB(200,200,220)
-	F.LGuessTimer.Text = tostring(data.timeLeft or 60).."s"; F.LGuessTimer.TextColor3 = Color3.fromRGB(255,215,0)
-	if mySlot and _G.ZoomGuessTurn then _G.ZoomGuessTurn(mySlot, 0.8)
-	elseif mySlot and _G.ZoomIntoMyFace then _G.ZoomIntoMyFace(mySlot, 0.8) end
+	F.LGuessTitle.Text = "Guess " .. tostring(data.opponentName or "?") .. "'s letter"
+	F.LGuessFeedback.Text = "One guess per turn"
+	F.LGuessFeedback.TextColor3 = Color3.fromRGB(200, 200, 220)
+	F.LGuessTimer.Text = tostring(tonumber(data.timeLeft) or 60) .. "s"
+	F.LGuessTimer.TextColor3 = Color3.fromRGB(255, 215, 0)
+
+	if mySlot and _G.ZoomGuessTurn then
+		_G.ZoomGuessTurn(mySlot, 0.8)
+	elseif mySlot and _G.ZoomIntoMyFace then
+		_G.ZoomIntoMyFace(mySlot, 0.8)
+	end
+
 	buildLetterGrid(F.LGuessGrid, function(letter)
-		E.SubmitLetterGuess:FireServer(letter); hideAll(); F.WaitF.Visible = true; F.WaitLbl.Text = "Waiting for response..."
+		E.SubmitLetterGuess:FireServer(letter)
+		hideAll()
+		F.WaitF.Visible = true
+		F.WaitLbl.Text = "Waiting for response..."
 		if _G.GoWideShot then _G.GoWideShot(0.5) end
 	end)
+
 	applyElim(F.LGuessGrid, myElimMin, myElimMax)
 end)
 
 E.LetterGuessResult.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	if data.result == "higher" then
+
+	local result = string.lower(tostring(data.result or ""))
+	if result == "higher" then
 		myElimMin = tonumber(data.eliminatedMin) or myElimMin
-	elseif data.result == "lower" then
+	elseif result == "lower" then
 		myElimMax = tonumber(data.eliminatedMax) or myElimMax
 	end
+
 	hideGuessingOverlay()
 	if _G.GoWideShot then _G.GoWideShot(0.45) end
-	F.WaitF.Visible = true; F.WaitLbl.Text = tostring(data.message or "Response received")
+	F.WaitF.Visible = true
+	F.WaitLbl.Text = tostring(data.message or "Response received")
 end)
 
 E.ShowCountryGuess.OnClientEvent:Connect(function(data)
