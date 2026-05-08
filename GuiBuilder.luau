@@ -1,4 +1,4 @@
--- GuiBuilder (clean camera logic for Tables + BotTables)
+-- GuiBuilder (fixed camera logic for Tables + BotTables)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
@@ -9,32 +9,89 @@ local camera = workspace.CurrentCamera
 local Events = ReplicatedStorage:WaitForChild("Events")
 
 local TablesFolder = workspace:WaitForChild("Tables")
-local BotTablesFolder = workspace:FindFirstChild("BotTables")
+local BotTablesFolder = workspace:WaitForChild("BotTables")
 
 _G.ActiveBotTableId = _G.ActiveBotTableId or nil
 
-local BotCameraFocus = Events:FindFirstChild("BotCameraFocus")
-if BotCameraFocus then
-	BotCameraFocus.OnClientEvent:Connect(function(tableId)
+-- Keep explicit camera context so we don't fallback to random normal table.
+local activeContext = {
+	mode = "normal", -- "normal" | "bot"
+	tableId = nil,
+}
+
+local function setContextFromTableId(tableId)
+	if not tableId or tableId == "" then
+		activeContext.mode = "normal"
+		activeContext.tableId = nil
+		_G.ActiveBotTableId = nil
+		return
+	end
+
+	if BotTablesFolder:FindFirstChild(tableId) then
+		activeContext.mode = "bot"
+		activeContext.tableId = tableId
 		_G.ActiveBotTableId = tableId
-	end)
+		return
+	end
+
+	if TablesFolder:FindFirstChild(tableId) then
+		activeContext.mode = "normal"
+		activeContext.tableId = tableId
+		_G.ActiveBotTableId = nil
+		return
+	end
+
+	-- Unknown id; clear and allow fallback logic.
+	activeContext.mode = "normal"
+	activeContext.tableId = nil
+	_G.ActiveBotTableId = nil
 end
 
--- Fallback sync from shared seat events
+local BotCameraFocus = Events:WaitForChild("BotCameraFocus")
+local BotTableSat = Events:WaitForChild("BotTableSat")
+local BotTableStood = Events:WaitForChild("BotTableStood")
 local PSat = Events:WaitForChild("PlayerSat")
 local PStood = Events:WaitForChild("PlayerStood")
 
+BotCameraFocus.OnClientEvent:Connect(function(tableId)
+	setContextFromTableId(tableId)
+end)
+
+BotTableSat.OnClientEvent:Connect(function(tableId, playerName)
+	if playerName == player.Name then
+		setContextFromTableId(tableId)
+	end
+end)
+
+BotTableStood.OnClientEvent:Connect(function(tableId, playerName)
+	if playerName == player.Name and activeContext.tableId == tableId then
+		setContextFromTableId(nil)
+	end
+end)
+
+-- Fallback from shared events too.
+local function parseSharedTableId(rawId)
+	local s = tostring(rawId or "")
+	local isBot = s:sub(1, 4) == "BOT:"
+	if isBot then
+		return true, s:sub(5)
+	end
+	return false, s
+end
+
 PSat.OnClientEvent:Connect(function(_slot, playerName, tableId)
 	if playerName ~= player.Name then return end
-	if not tableId or not BotTablesFolder then return end
-	if BotTablesFolder:FindFirstChild(tableId) then
-		_G.ActiveBotTableId = tableId
+	local isBot, id = parseSharedTableId(tableId)
+	if id == "" then return end
+	if isBot then
+		_G.ActiveBotTableId = id
 	end
 end)
 
 PStood.OnClientEvent:Connect(function(_slot, playerName, tableId)
 	if playerName ~= player.Name then return end
-	if tableId and _G.ActiveBotTableId == tableId then
+	local isBot, id = parseSharedTableId(tableId)
+	if isBot and _G.ActiveBotTableId == id then
 		_G.ActiveBotTableId = nil
 	end
 end)
@@ -146,31 +203,39 @@ local function getClosestNormalTableModel()
 	return bestModel
 end
 
-local function getActiveSeats()
-	-- Priority 1: bot table while in bot mode
-	local botId = _G.ActiveBotTableId
-	if botId and BotTablesFolder then
-		local model = BotTablesFolder:FindFirstChild(botId)
-		if model and model:IsA("Model") then
-			local seatA = model:FindFirstChild("SeatA") or model:FindFirstChild("SeatB")
-			local seatB = model:FindFirstChild("SeatB") or seatA
-			if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
-				return seatA, seatB
-			end
-		end
-	end
-
-	-- Priority 2: normal tables
-	local model = getClosestNormalTableModel()
+local function getModelSeats(model)
 	if not model then return nil, nil end
-
-	local seatA = model:FindFirstChild("SeatA")
-	local seatB = model:FindFirstChild("SeatB")
+	local seatA = model:FindFirstChild("SeatA") or model:FindFirstChild("SeatB")
+	local seatB = model:FindFirstChild("SeatB") or seatA
 	if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
 		return seatA, seatB
 	end
-
 	return nil, nil
+end
+
+local function getActiveSeats()
+	-- Priority 1: explicit active context table
+	if activeContext.tableId then
+		local folder = activeContext.mode == "bot" and BotTablesFolder or TablesFolder
+		local model = folder and folder:FindFirstChild(activeContext.tableId)
+		local a, b = getModelSeats(model)
+		if a and b then
+			return a, b
+		end
+	end
+
+	-- Priority 2: global bot id
+	if _G.ActiveBotTableId then
+		local model = BotTablesFolder:FindFirstChild(_G.ActiveBotTableId)
+		local a, b = getModelSeats(model)
+		if a and b then
+			return a, b
+		end
+	end
+
+	-- Priority 3: closest normal table
+	local normal = getClosestNormalTableModel()
+	return getModelSeats(normal)
 end
 
 local CAM = {
