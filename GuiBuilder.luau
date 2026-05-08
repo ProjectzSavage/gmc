@@ -1,10 +1,43 @@
--- v2026-04-17 camera + head text typing
+-- GuiBuilder (clean camera logic for Tables + BotTables)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
+local Events = ReplicatedStorage:WaitForChild("Events")
+
+local TablesFolder = workspace:WaitForChild("Tables")
+local BotTablesFolder = workspace:FindFirstChild("BotTables")
+
+_G.ActiveBotTableId = _G.ActiveBotTableId or nil
+
+local BotCameraFocus = Events:FindFirstChild("BotCameraFocus")
+if BotCameraFocus then
+	BotCameraFocus.OnClientEvent:Connect(function(tableId)
+		_G.ActiveBotTableId = tableId
+	end)
+end
+
+-- Fallback sync from shared seat events
+local PSat = Events:WaitForChild("PlayerSat")
+local PStood = Events:WaitForChild("PlayerStood")
+
+PSat.OnClientEvent:Connect(function(_slot, playerName, tableId)
+	if playerName ~= player.Name then return end
+	if not tableId or not BotTablesFolder then return end
+	if BotTablesFolder:FindFirstChild(tableId) then
+		_G.ActiveBotTableId = tableId
+	end
+end)
+
+PStood.OnClientEvent:Connect(function(_slot, playerName, tableId)
+	if playerName ~= player.Name then return end
+	if tableId and _G.ActiveBotTableId == tableId then
+		_G.ActiveBotTableId = nil
+	end
+end)
 
 local blur = Lighting:FindFirstChild("GameBlur")
 if not blur then
@@ -21,7 +54,6 @@ local HUDSeat2 = HUD and HUD:FindFirstChild("Seat2") or nil
 local HUDStatus = HUD and HUD:FindFirstChild("Status") or nil
 
 local BlurOverlay = GameGui:WaitForChild("BlurOverlay")
-
 local GuessingLbl = BlurOverlay:FindFirstChild("GuessingLbl")
 if not GuessingLbl then
 	GuessingLbl = Instance.new("TextLabel")
@@ -90,9 +122,7 @@ end
 normalizeLetterGrid(LPickGrid)
 normalizeLetterGrid(LGuessGrid)
 
-local TablesFolder = workspace:WaitForChild("Tables")
-
-local function getClosestTableModel()
+local function getClosestNormalTableModel()
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if not root then
@@ -101,7 +131,6 @@ local function getClosestTableModel()
 
 	local bestModel = nil
 	local bestDistance = math.huge
-
 	for _, model in ipairs(TablesFolder:GetChildren()) do
 		if model:IsA("Model") then
 			local top = model:FindFirstChild("TableTop")
@@ -114,12 +143,25 @@ local function getClosestTableModel()
 			end
 		end
 	end
-
 	return bestModel
 end
 
 local function getActiveSeats()
-	local model = getClosestTableModel()
+	-- Priority 1: bot table while in bot mode
+	local botId = _G.ActiveBotTableId
+	if botId and BotTablesFolder then
+		local model = BotTablesFolder:FindFirstChild(botId)
+		if model and model:IsA("Model") then
+			local seatA = model:FindFirstChild("SeatA") or model:FindFirstChild("SeatB")
+			local seatB = model:FindFirstChild("SeatB") or seatA
+			if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
+				return seatA, seatB
+			end
+		end
+	end
+
+	-- Priority 2: normal tables
+	local model = getClosestNormalTableModel()
 	if not model then return nil, nil end
 
 	local seatA = model:FindFirstChild("SeatA")
@@ -128,17 +170,6 @@ local function getActiveSeats()
 		return seatA, seatB
 	end
 
-	return nil, nil
-end
-
-local function getActiveSeats()
-	local model = getClosestTableModel()
-	if not model then return nil, nil end
-	local seatA = model:FindFirstChild("SeatA")
-	local seatB = model:FindFirstChild("SeatB")
-	if seatA and seatB and seatA:IsA("BasePart") and seatB:IsA("BasePart") then
-		return seatA, seatB
-	end
 	return nil, nil
 end
 
@@ -185,6 +216,7 @@ local function getWideCFrame()
 	local row = (posB - posA).Unit
 	local forward = row:Cross(Vector3.new(0, 1, 0)).Unit
 	if CAM.flip then forward = -forward end
+
 	local camPos = center + forward * CAM.frontDistance + Vector3.new(0, CAM.height, 0)
 	local lookAt = center + Vector3.new(0, CAM.lookAtHeight, 0)
 	return CFrame.new(camPos, lookAt)
@@ -200,6 +232,7 @@ local function getFaceCFrame(slot)
 	local row = (seatB.Position - seatA.Position).Unit
 	local forward = row:Cross(Vector3.new(0, 1, 0)).Unit
 	if CAM.flip then forward = -forward end
+
 	local camPos = seat.Position + forward * CAM.faceDistance + Vector3.new(0, CAM.faceHeight, 0)
 	local lookAt = seat.Position + Vector3.new(0, CAM.faceLookHeight, 0)
 	return CFrame.new(camPos, lookAt)
@@ -208,8 +241,10 @@ end
 local function goWideShot(duration)
 	duration = duration or 0.8
 	hideGuessingOverlay()
+
 	tweenCam(getWideCFrame(), CAM.fov, duration)
 	TweenService:Create(blur, TweenInfo.new(duration), { Size = 0 }):Play()
+
 	BlurOverlay.Visible = true
 	local t = TweenService:Create(BlurOverlay, TweenInfo.new(duration), { BackgroundTransparency = 1 })
 	t:Play()
