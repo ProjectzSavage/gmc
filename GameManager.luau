@@ -65,9 +65,43 @@ local function countryExistsForLetter(letter, countryName)
 	end
 	return false
 end
-local function getWinstreakValue(player)
-	if not player then return 0 end
+local REWARDS = {
+	WinCash = 200,
+	WinIncrease = 1,
+	WinstreakIncrease = 1,
+}
+
+local function awardWinner(player)
+	if not player then return end
 	local stats = player:FindFirstChild("leaderstats")
+	if not stats then return end
+
+	local cash = stats:FindFirstChild("Cash")
+	local wins = stats:FindFirstChild("Wins")
+	local winstreak = stats:FindFirstChild("Winstreak")
+
+	if cash and cash:IsA("IntValue") then
+		cash.Value += REWARDS.WinCash
+	end
+	if wins and wins:IsA("IntValue") then
+		wins.Value += REWARDS.WinIncrease
+	end
+	if winstreak and winstreak:IsA("IntValue") then
+		winstreak.Value += REWARDS.WinstreakIncrease
+	end
+end
+
+local function resetLoserStreak(player)
+	if not player then return end
+	local stats = player:FindFirstChild("leaderstats")
+	if not stats then return end
+	local ws = stats:FindFirstChild("Winstreak")
+	if ws and ws:IsA("IntValue") then
+		ws.Value = 0
+	end
+end
+local function getWinstreakValue(player)
+	local stats = player and player:FindFirstChild("leaderstats")
 	local ws = stats and stats:FindFirstChild("Winstreak")
 	return (ws and ws:IsA("IntValue")) and ws.Value or 0
 end
@@ -130,24 +164,27 @@ local function endSessionWithWinner(tableId, winner, reason)
 	session.token += 1
 
 	local loser = getOtherPlayer(session, winner)
-	local winnerName = winner and winner.Name or "Unknown"
 
+	-- Reward winner + reset loser streak
+	awardWinner(winner)
+	resetLoserStreak(loser)
+
+	local winnerName = winner and winner.Name or "Unknown"
 	fireBoth(session, E.GameOver, {
 		winner = winnerName,
 		reason = reason or "",
-		rewardCash = 200,
+		rewardCash = REWARDS.WinCash,
 	})
+
+	-- Temporary winner flame above head
 	if winner then
 		local streak = getWinstreakValue(winner)
-		local fireCount = math.clamp(streak, 1, 5)
-		local emoji = string.rep("🔥", fireCount)
-		local text = winner.Name .. " wins! " .. emoji
-		fireBoth(session, E.ShowBillboard, winner.Name, text, "green")
+		local flames = string.rep("🔥", math.clamp(streak, 1, 5))
+		fireBoth(session, E.ShowBillboard, winner.Name, winner.Name .. " " .. flames, "green")
 	end
 
-	-- Winner exits chair
+	-- Winner stands
 	task.delay(0.35, function()
-		if not session then return end
 		if _G.SeatManager and _G.SeatManager.standPlayer and winner then
 			_G.SeatManager.standPlayer(winner)
 		end
@@ -155,7 +192,6 @@ local function endSessionWithWinner(tableId, winner, reason)
 
 	-- Loser dies
 	task.delay(1.0, function()
-		if not session then return end
 		if loser and loser.Character then
 			local hum = loser.Character:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 then
