@@ -41,6 +41,14 @@ local CFG = {
 
 local sessions = {}
 local playerToTable = {}
+_G.GetSessionByPlayer = function(player)
+	if not player then return nil end
+	local tableId = playerToTable[player.UserId]
+	if not tableId then return nil end
+	local s = sessions[tableId]
+	if s and s.active then return s end
+	return nil
+end
 
 local function countryListForLetter(letter)
 	local list = CountryData.ByLetter[string.upper(letter or "")]
@@ -57,7 +65,12 @@ local function countryExistsForLetter(letter, countryName)
 	end
 	return false
 end
-
+local function getWinstreakValue(player)
+	if not player then return 0 end
+	local stats = player:FindFirstChild("leaderstats")
+	local ws = stats and stats:FindFirstChild("Winstreak")
+	return (ws and ws:IsA("IntValue")) and ws.Value or 0
+end
 local function getOtherPlayer(session, player)
 	if player == session.playerA then return session.playerB end
 	if player == session.playerB then return session.playerA end
@@ -124,6 +137,13 @@ local function endSessionWithWinner(tableId, winner, reason)
 		reason = reason or "",
 		rewardCash = 200,
 	})
+	if winner then
+		local streak = getWinstreakValue(winner)
+		local fireCount = math.clamp(streak, 1, 5)
+		local emoji = string.rep("🔥", fireCount)
+		local text = winner.Name .. " wins! " .. emoji
+		fireBoth(session, E.ShowBillboard, winner.Name, text, "green")
+	end
 
 	-- Winner exits chair
 	task.delay(0.35, function()
