@@ -116,18 +116,35 @@ local function endSessionWithWinner(tableId, winner, reason)
 	session.active = false
 	session.token += 1
 
+	local loser = getOtherPlayer(session, winner)
 	local winnerName = winner and winner.Name or "Unknown"
+
 	fireBoth(session, E.GameOver, {
 		winner = winnerName,
 		reason = reason or "",
 		rewardCash = 200,
 	})
 
-	task.delay(1.2, function()
-		if _G.SeatManager and _G.SeatManager.standPlayer then
-			if session.playerA then _G.SeatManager.standPlayer(session.playerA) end
-			if session.playerB then _G.SeatManager.standPlayer(session.playerB) end
+	-- Winner exits chair
+	task.delay(0.35, function()
+		if not session then return end
+		if _G.SeatManager and _G.SeatManager.standPlayer and winner then
+			_G.SeatManager.standPlayer(winner)
 		end
+	end)
+
+	-- Loser dies
+	task.delay(1.0, function()
+		if not session then return end
+		if loser and loser.Character then
+			local hum = loser.Character:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				hum.Health = 0
+			end
+		end
+	end)
+
+	task.delay(1.5, function()
 		clearSession(tableId)
 	end)
 end
@@ -394,16 +411,11 @@ E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
 
 		task.delay(CFG.RESPONSE_DISPLAY_TIME, function()
 			if not session.active then return end
-			if meProgress.letterKnown then
-				-- same player continues immediately with country guess
-				openTurn(session)
-			else
-				-- switch turn
-				session.turnPlayer = other
-				task.delay(CFG.TURN_SWITCH_BUFFER, function()
-					if session.active then openTurn(session) end
-				end)
-			end
+			-- Always alternate turns
+			session.turnPlayer = other
+			task.delay(CFG.TURN_SWITCH_BUFFER, function()
+				if session.active then openTurn(session) end
+			end)
 		end)
 	end)
 end)
