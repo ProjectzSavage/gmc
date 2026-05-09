@@ -27,6 +27,7 @@ local E = {
 	ResetAll = event("ResetAll"),
 	TableCountdown = event("TableCountdown"),
 	TableStatus = event("TableStatus"),
+	SetHeadTagsVisible = event("SetHeadTagsVisible"), -- add this
 }
 
 local CFG = {
@@ -35,6 +36,7 @@ local CFG = {
 	ASK_TO_RESPONSE_DELAY = 1.2,
 	RESPONSE_DISPLAY_TIME = 1.7,
 	TURN_SWITCH_BUFFER = 0.65,
+	POST_PICK_TO_FIRST_TURN_DELAY = 2.0, -- add this
 }
 
 local sessions = {}
@@ -94,8 +96,9 @@ local function clearSession(tableId)
 	if not session then return end
 
 	sessions[tableId] = nil
-	if session.playerA then playerToTable[session.playerA.UserId] = nil end
-	if session.playerB then playerToTable[session.playerB.UserId] = nil end
+	if session.playerA and session.playerB then
+		E.SetHeadTagsVisible:FireAllClients({session.playerA.Name, session.playerB.Name}, true)
+	end
 
 	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
 		_G.SeatManager.setTablePromptEnabled(tableId, true)
@@ -210,10 +213,22 @@ local function maybeStartGame(tableId)
 	local b = getSecret(session, session.playerB)
 	if not a or not b or not a.country or not b.country then return end
 
-	session.phase = "turn"
+	session.phase = "pre-turn"
 	session.turnPlayer = (math.random(1, 2) == 1) and session.playerA or session.playerB
-	setTableStatus(tableId, "In match")
-	openTurn(session)
+	setTableStatus(tableId, "Get ready...")
+
+	-- hide player name tags during gameplay
+	E.SetHeadTagsVisible:FireAllClients({session.playerA.Name, session.playerB.Name}, false)
+
+	-- short pause before first guess turn
+	fireBoth(session, E.ShowWait, "Get ready...", nil, nil, nil)
+
+	task.delay(CFG.POST_PICK_TO_FIRST_TURN_DELAY, function()
+		if not session.active then return end
+		session.phase = "turn"
+		setTableStatus(tableId, "In match")
+		openTurn(session)
+	end)
 end
 
 local function beginLetterPick(tableId)
