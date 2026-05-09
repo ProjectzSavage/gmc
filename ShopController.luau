@@ -108,18 +108,37 @@ end
 
 shop.Visible = false
 
+shop.Visible = false
+
+local t = 0
+while not _G.UIWindowAnimator and t < 5 do
+	task.wait(0.1)
+	t += 0.1
+end
+
+if _G.UIWindowAnimator and _G.UIWindowAnimator.register then
+	_G.UIWindowAnimator.register("shop", shop, openBtn, closeBtn)
+else
+	-- fallback if animator did not load
+	openBtn.MouseButton1Click:Connect(function()
+		shop.Visible = not shop.Visible
+		if shop.Visible then
+			ShopRequestRefresh:FireServer()
+		end
+	end)
+	if closeBtn and closeBtn:IsA("TextButton") then
+		closeBtn.MouseButton1Click:Connect(function()
+			shop.Visible = false
+		end)
+	end
+end
+
+-- keep refresh behavior when shop opens
 openBtn.MouseButton1Click:Connect(function()
-	shop.Visible = not shop.Visible
-	if shop.Visible then
+	if _G.UIWindowAnimator and _G.UIWindowAnimator.getActiveId and _G.UIWindowAnimator.getActiveId() == "shop" then
 		ShopRequestRefresh:FireServer()
 	end
 end)
-
-if closeBtn and closeBtn:IsA("TextButton") then
-	closeBtn.MouseButton1Click:Connect(function()
-		shop.Visible = false
-	end)
-end
 
 ShopSync.OnClientEvent:Connect(function(payload)
 	if type(payload) ~= "table" then return end
