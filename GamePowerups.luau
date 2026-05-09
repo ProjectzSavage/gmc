@@ -114,7 +114,14 @@ end
 -- Apply effect
 ----------------------------------------------------------------
 _G.ApplyGamePowerup = function(player, powerupType)
-	local session = _G.CurrentGameSession
+	local session = nil
+	if _G.GetSessionByPlayer then
+		session = _G.GetSessionByPlayer(player)
+	end
+	if not session and _G.CurrentGameSession and _G.CurrentGameSession.active then
+		session = _G.CurrentGameSession
+	end
+
 	if not session or not session.active then
 		NotifyPlayer:FireClient(player, {
 			title = "No Active Game", message = "No active game.",
