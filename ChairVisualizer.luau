@@ -60,8 +60,11 @@ end)
 -- Re-apply on respawn
 player.CharacterAdded:Connect(function(c)
 	char = c
-	-- Wait a moment for sync to fire, or request it
 	task.wait(0.5)
-	-- Trigger request if needed
-	Events.ChairRequest:FireServer()
+
+	-- ChairRequest may not exist in all builds; guard it.
+	local chairRequest = Events:FindFirstChild("ChairRequest")
+	if chairRequest and chairRequest:IsA("RemoteEvent") then
+		chairRequest:FireServer()
+	end
 end)
