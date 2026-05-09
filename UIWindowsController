@@ -1,0 +1,225 @@
+-- UIWindowsController
+-- Animated open/close for Shop, Rewards, Inventory
+-- Only one window open at a time
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RS = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+local events = RS:WaitForChild("Events")
+
+local ShopRequestRefresh = events:FindFirstChild("ShopRequestRefresh")
+local RewardRequestSync = events:FindFirstChild("RewardRequestSync")
+local RequestSync = events:FindFirstChild("RequestSync") -- chair inventory remote (RemoteFunction)
+
+local OPEN_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+
+local windows = {}
+local activeId = nil
+local busy = false
+
+local function findFirstByNames(root, names)
+	for _, n in ipairs(names) do
+		local f = root:FindFirstChild(n, true)
+		if f then return f end
+	end
+	return nil
+end
+
+local function ensureScale(panel)
+	local s = panel:FindFirstChild("UIWindowScale")
+	if not s then
+		s = Instance.new("UIScale")
+		s.Name = "UIWindowScale"
+		s.Scale = 1
+		s.Parent = panel
+	end
+	return s
+end
+
+local function replaceButton(btn)
+	if not btn or not btn:IsA("GuiButton") then return nil end
+	local clone = btn:Clone()
+	clone.Parent = btn.Parent
+	clone.LayoutOrder = btn.LayoutOrder
+	clone.ZIndex = btn.ZIndex
+	clone.Name = btn.Name
+	btn:Destroy()
+	return clone
+end
+
+local function tweenOpen(w)
+	local panel = w.panel
+	local scale = ensureScale(panel)
+
+	panel.Visible = true
+
+	if not w.basePosition then
+		w.basePosition = panel.Position
+	end
+
+	scale.Scale = 0.94
+	panel.Position = w.basePosition + UDim2.fromOffset(0, 16)
+
+	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
+	TweenService:Create(panel, OPEN_TWEEN, { Position = w.basePosition }):Play()
+end
+
+local function tweenClose(w, onDone)
+	local panel = w.panel
+	local scale = ensureScale(panel)
+
+	local targetPos = (w.basePosition or panel.Position) + UDim2.fromOffset(0, 12)
+
+	local t1 = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.96 })
+	local t2 = TweenService:Create(panel, CLOSE_TWEEN, { Position = targetPos })
+	t1:Play()
+	t2:Play()
+
+	task.delay(CLOSE_TWEEN.Time, function()
+		if panel and panel.Parent then
+			panel.Visible = false
+			panel.Position = w.basePosition or panel.Position
+		end
+		if onDone then onDone() end
+	end)
+end
+
+local function closeCurrent(done)
+	if not activeId then
+		if done then done() end
+		return
+	end
+	local w = windows[activeId]
+	if not w then
+		activeId = nil
+		if done then done() end
+		return
+	end
+
+	tweenClose(w, function()
+		activeId = nil
+		if done then done() end
+	end)
+end
+
+local function openWindow(id)
+	if busy then return end
+	local w = windows[id]
+	if not w or not w.panel then return end
+
+	busy = true
+
+	local function doOpen()
+		activeId = id
+		tweenOpen(w)
+		if w.onOpen then w.onOpen() end
+		task.delay(OPEN_TWEEN.Time + 0.02, function()
+			busy = false
+		end)
+	end
+
+	if activeId and activeId ~= id then
+		closeCurrent(doOpen)
+	elseif activeId == id and w.panel.Visible then
+		tweenClose(w, function()
+			activeId = nil
+			busy = false
+		end)
+	else
+		doOpen()
+	end
+end
+
+local function registerWindow(def)
+	local panel = findFirstByNames(gameGui, def.panelNames)
+	if not panel or not panel:IsA("GuiObject") then
+		warn("[UIWindowsController] Missing panel for", def.id)
+		return
+	end
+
+	local openBtn = findFirstByNames(gameGui, def.openBtnNames)
+	if not openBtn or not openBtn:IsA("GuiButton") then
+		warn("[UIWindowsController] Missing open button for", def.id)
+		return
+	end
+
+	local closeBtn = findFirstByNames(panel, { "CloseBtn", "Close", "XBtn" })
+
+	-- Replace buttons to clear old conflicting click handlers.
+	openBtn = replaceButton(openBtn)
+	if closeBtn then closeBtn = replaceButton(closeBtn) end
+
+	local w = {
+		id = def.id,
+		panel = panel,
+		openBtn = openBtn,
+		closeBtn = closeBtn,
+		basePosition = panel.Position,
+		onOpen = def.onOpen,
+	}
+
+	windows[def.id] = w
+	panel.Visible = false
+	ensureScale(panel).Scale = 1
+
+	openBtn.MouseButton1Click:Connect(function()
+		openWindow(def.id)
+	end)
+
+	if closeBtn and closeBtn:IsA("GuiButton") then
+		closeBtn.MouseButton1Click:Connect(function()
+			if busy then return end
+			if activeId == def.id then
+				busy = true
+				tweenClose(w, function()
+					activeId = nil
+					busy = false
+				end)
+			else
+				panel.Visible = false
+			end
+		end)
+	end
+end
+
+registerWindow({
+	id = "shop",
+	panelNames = { "ShopF" },
+	openBtnNames = { "OpenShopBtn" },
+	onOpen = function()
+		if ShopRequestRefresh and ShopRequestRefresh:IsA("RemoteEvent") then
+			ShopRequestRefresh:FireServer()
+		end
+	end,
+})
+
+registerWindow({
+	id = "rewards",
+	panelNames = { "RewardsF" },
+	openBtnNames = { "OpenRewardsBtn" },
+	onOpen = function()
+		if RewardRequestSync and RewardRequestSync:IsA("RemoteEvent") then
+			RewardRequestSync:FireServer()
+		end
+	end,
+})
+
+registerWindow({
+	id = "inventory",
+	panelNames = { "ChairInvPanel", "InventoryF", "InvF" },
+	openBtnNames = { "OpenChairInvBtn", "OpenChairInventoryBtn", "OpenInventoryBtn", "OpenInvBtn" },
+	onOpen = function()
+		-- optional refresh; only if RequestSync exists as RemoteFunction
+		if RequestSync and RequestSync:IsA("RemoteFunction") then
+			pcall(function()
+				RequestSync:InvokeServer()
+			end)
+		end
+	end,
+})
+
+print("[UIWindowsController] Ready")
