@@ -362,7 +362,7 @@ local function render()
 
 	titleLbl.Text = CAT_TITLE[activeCat] or "Rewards"
 
-	-- No payload yet — show loading state, don't crash
+	-- No payload yet â€” show loading state, don't crash
 	if not payload then
 		subLbl.Text = "Waiting for server sync..."
 		clearRows()
@@ -445,7 +445,7 @@ for btnName, cat in pairs(TAB_TO_CAT) do
 	if btn and btn:IsA("TextButton") then
 		btn.MouseButton1Click:Connect(function()
 			-- FIX: switching tabs sets activeCat but does NOT reset lastRenderedCat
-			-- to the NEW cat yet — render() does that, so timers only re-seed
+			-- to the NEW cat yet â€” render() does that, so timers only re-seed
 			-- when the category actually changes (not on re-clicks of the same tab).
 			if activeCat ~= cat then
 				lastRenderedCat = nil -- allow re-seed for the new tab
@@ -458,22 +458,24 @@ for btnName, cat in pairs(TAB_TO_CAT) do
 	end
 end
 
--- Open / close
-openBtn.MouseButton1Click:Connect(function()
-	root.Visible = not root.Visible
-	if root.Visible then
-		-- Request a fresh sync from the server when the panel opens
-		RewardRequestSync:FireServer()
-		if not payload and activeCat then
-			titleLbl.Text = CAT_TITLE[activeCat] or "Rewards"
-			subLbl.Text   = "Syncing rewards data..."
-		end
-	end
-end)
+root.Visible = false
 
-closeBtn.MouseButton1Click:Connect(function()
-	root.Visible = false
-end)
+local t = 0
+while not _G.UIWindowAnimator and t < 5 do
+	task.wait(0.1)
+	t += 0.1
+end
+
+if _G.UIWindowAnimator and _G.UIWindowAnimator.register then
+	_G.UIWindowAnimator.register("rewards", root, openBtn, closeBtn)
+else
+	openBtn.MouseButton1Click:Connect(function()
+		root.Visible = not root.Visible
+	end)
+	closeBtn.MouseButton1Click:Connect(function()
+		root.Visible = false
+	end)
+end
 
 -- Server sync handler
 -- FIX: when new payload arrives, update timers only if the tab is open and the
@@ -498,7 +500,7 @@ RewardSync.OnClientEvent:Connect(function(newPayload)
 
 	payload = newPayload
 
-	-- A new payload arrived — if the user is on a live-timer tab, the subtitle
+	-- A new payload arrived â€” if the user is on a live-timer tab, the subtitle
 	-- will update on the next Heartbeat tick automatically. Just re-draw rows.
 	if activeCat then
 		clearRows()
