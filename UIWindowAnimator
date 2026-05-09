@@ -1,0 +1,101 @@
+-- A_UIWindowAnimator
+-- Shared open/close animation + single-active-window behavior
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+
+local windows = {}
+local activeId = nil
+
+local OPEN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+
+local function ensureScale(panel)
+	local scale = panel:FindFirstChild("UIWindowScale")
+	if not scale then
+		scale = Instance.new("UIScale")
+		scale.Name = "UIWindowScale"
+		scale.Scale = 1
+		scale.Parent = panel
+	end
+	return scale
+end
+
+local function openWindow(id)
+	local w = windows[id]
+	if not w or not w.panel then return end
+
+	if activeId and activeId ~= id then
+		local old = windows[activeId]
+		if old and old.panel then
+			local oldScale = ensureScale(old.panel)
+			TweenService:Create(oldScale, CLOSE_TWEEN, { Scale = 0.95 }):Play()
+			task.delay(CLOSE_TWEEN.Time, function()
+				if old.panel then old.panel.Visible = false end
+			end)
+		end
+	end
+
+	activeId = id
+	w.panel.Visible = true
+	local s = ensureScale(w.panel)
+	s.Scale = 0.95
+	TweenService:Create(s, OPEN_TWEEN, { Scale = 1 }):Play()
+end
+
+local function closeWindow(id)
+	local w = windows[id]
+	if not w or not w.panel then return end
+
+	local s = ensureScale(w.panel)
+	TweenService:Create(s, CLOSE_TWEEN, { Scale = 0.95 }):Play()
+	task.delay(CLOSE_TWEEN.Time, function()
+		if w.panel then w.panel.Visible = false end
+		if activeId == id then activeId = nil end
+	end)
+end
+
+local function toggleWindow(id)
+	local w = windows[id]
+	if not w or not w.panel then return end
+
+	if activeId == id and w.panel.Visible then
+		closeWindow(id)
+	else
+		openWindow(id)
+	end
+end
+
+local function safeConnect(btn, fn)
+	if btn and btn:IsA("GuiButton") then
+		btn.MouseButton1Click:Connect(fn)
+	end
+end
+
+local function register(id, panel, openBtn, closeBtn)
+	if not id or not panel then return end
+	windows[id] = { panel = panel, openBtn = openBtn, closeBtn = closeBtn }
+
+	panel.Visible = false
+	ensureScale(panel).Scale = 1
+
+	safeConnect(openBtn, function()
+		toggleWindow(id)
+	end)
+
+	safeConnect(closeBtn, function()
+		closeWindow(id)
+	end)
+end
+
+_G.UIWindowAnimator = {
+	register = register,
+	open = openWindow,
+	close = closeWindow,
+	toggle = toggleWindow,
+	getActiveId = function() return activeId end,
+}
+
+print("[UIWindowAnimator] Ready")
