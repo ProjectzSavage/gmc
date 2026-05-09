@@ -11,6 +11,33 @@ local EquipChair = Events:WaitForChild("EquipChair")
 local PlayerGui = player:WaitForChild("PlayerGui")
 local GameGui = PlayerGui:WaitForChild("GameGui")
 local Panel = GameGui:WaitForChild("ChairInvPanel")
+local openInvBtn =
+	GameGui:FindFirstChild("OpenChairInvBtn")
+	or GameGui:FindFirstChild("OpenInventoryBtn")
+	or GameGui:FindFirstChild("OpenInvBtn")
+
+local closeInvBtn = Panel:FindFirstChild("CloseBtn")
+
+Panel.Visible = false
+
+local t = 0
+while not _G.UIWindowAnimator and t < 5 do
+	task.wait(0.1)
+	t += 0.1
+end
+
+if _G.UIWindowAnimator and _G.UIWindowAnimator.register then
+	_G.UIWindowAnimator.register("inventory", Panel, openInvBtn, closeInvBtn)
+elseif openInvBtn and openInvBtn:IsA("GuiButton") then
+	openInvBtn.MouseButton1Click:Connect(function()
+		Panel.Visible = not Panel.Visible
+	end)
+	if closeInvBtn and closeInvBtn:IsA("GuiButton") then
+		closeInvBtn.MouseButton1Click:Connect(function()
+			Panel.Visible = false
+		end)
+	end
+end
 local Grid = Panel:WaitForChild("Grid")
 local Template = Grid:WaitForChild("Template")
 
