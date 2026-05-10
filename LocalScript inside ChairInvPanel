@@ -68,9 +68,13 @@ end
 
 -- FIX: Get data immediately when joining
 task.spawn(function()
-	if RequestSync then
+	if RequestSync and RequestSync:IsA("RemoteFunction") then
 		local data = RequestSync:InvokeServer()
-		if data then myData = data; render() end
+		if type(data) == "table" then
+			if type(data.owned) == "table" then myData.owned = data.owned end
+			if type(data.equipped) == "string" and data.equipped ~= "" then myData.equipped = data.equipped end
+			render()
+		end
 	end
 end)
 
@@ -80,6 +84,15 @@ end)
 closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
 
 ChairSync.OnClientEvent:Connect(function(data)
-	myData = data
+	if type(data) ~= "table" then return end
+
+	-- Merge payload so partial sync doesn't wipe owned list
+	if type(data.owned) == "table" then
+		myData.owned = data.owned
+	end
+	if type(data.equipped) == "string" and data.equipped ~= "" then
+		myData.equipped = data.equipped
+	end
+
 	render()
 end)
