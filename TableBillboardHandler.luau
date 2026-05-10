@@ -4,9 +4,23 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 
-local done = ReplicatedFirst:FindFirstChild("LoadingFinished")
-if done and done:IsA("BindableEvent") then
-	done.Event:Wait()
+local loadingState = ReplicatedFirst:FindFirstChild("LoadingState")
+if loadingState and loadingState:IsA("BoolValue") and not loadingState.Value then
+	local conn
+	conn = loadingState:GetPropertyChangedSignal("Value"):Connect(function()
+		if loadingState.Value and conn then
+			conn:Disconnect()
+			conn = nil
+		end
+	end)
+
+	-- safety timeout so script never hangs forever
+	local t = 0
+	while not loadingState.Value and t < 10 do
+		task.wait(0.1)
+		t += 0.1
+	end
+	if conn then conn:Disconnect() end
 end
 
 local player = Players.LocalPlayer
