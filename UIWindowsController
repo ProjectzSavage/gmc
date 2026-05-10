@@ -1,26 +1,44 @@
--- UIWindowsController
--- Animated open/close for Shop, Rewards, Inventory
--- Only one window open at a time
+-- UIWindowsController v2 — Polished Animations
+-- Open: slide up from +60px below, fade in, spring overshoot
+-- Close: fade out + shrink down, fast
+-- Toggle: tap open button again to close
+-- Switch: close + open overlap for snappiness
+-- Button: press squish feedback
 
-local Players = game:GetService("Players")
+local Players    = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local RS = game:GetService("ReplicatedStorage")
+local RS         = game:GetService("ReplicatedStorage")
 
-local player = Players.LocalPlayer
+local player  = Players.LocalPlayer
 local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
-local events = RS:WaitForChild("Events")
+local events  = RS:WaitForChild("Events")
 
 local ShopRequestRefresh = events:FindFirstChild("ShopRequestRefresh")
-local RewardRequestSync = events:FindFirstChild("RewardRequestSync")
-local RequestSync = events:FindFirstChild("RequestSync") -- chair inventory remote (RemoteFunction)
+local RewardRequestSync  = events:FindFirstChild("RewardRequestSync")
+local RequestSync        = events:FindFirstChild("RequestSync")
 
-local OPEN_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local CLOSE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+-- ── Tween configs ─────────────────────────────────────────────
+local T_OPEN_POS   = TweenInfo.new(0.38, Enum.EasingStyle.Back,  Enum.EasingDirection.Out) -- springy slide up
+local T_OPEN_FADE  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out) -- quick fade in
+local T_OPEN_SCALE = TweenInfo.new(0.38, Enum.EasingStyle.Back,  Enum.EasingDirection.Out) -- scale spring
 
-local windows = {}
+local T_CLOSE_POS  = TweenInfo.new(0.20, Enum.EasingStyle.Quint, Enum.EasingDirection.In)  -- fast exit
+local T_CLOSE_FADE = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local T_CLOSE_SCALE= TweenInfo.new(0.20, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+
+local T_SHAKE      = TweenInfo.new(0.07, Enum.EasingStyle.Sine,  Enum.EasingDirection.InOut)
+local T_BTN        = TweenInfo.new(0.10, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+
+local SLIDE_OFFSET = 60   -- px the panel starts below its resting position
+local CLOSE_DROP   = 20   -- px the panel drifts down on close
+local CLOSE_OVERLAP= 0.10 -- seconds into close animation before open begins
+
+-- ── State ─────────────────────────────────────────────────────
+local windows  = {}
 local activeId = nil
-local busy = false
+local busy     = false
 
+-- ── Helpers ───────────────────────────────────────────────────
 local function findFirstByNames(root, names)
 	for _, n in ipairs(names) do
 		local f = root:FindFirstChild(n, true)
@@ -40,65 +58,142 @@ local function ensureScale(panel)
 	return s
 end
 
+local function ensureGroupTransparency(panel)
+	-- We animate GroupTransparency on the panel's parent Frame if possible,
+	-- otherwise we set it directly on the panel itself.
+	-- Returns a setter function so we don't care which path we took.
+	local function setAlpha(v)
+		if panel:IsA("CanvasGroup") then
+			panel.GroupTransparency = v
+		else
+			-- fallback: tween BackgroundTransparency only (text/strokes unaffected)
+			panel.BackgroundTransparency = v
+		end
+	end
+	local function getAlpha()
+		if panel:IsA("CanvasGroup") then return panel.GroupTransparency end
+		return panel.BackgroundTransparency
+	end
+	return setAlpha, getAlpha
+end
+
 local function replaceButton(btn)
 	if not btn or not btn:IsA("GuiButton") then return nil end
 	local clone = btn:Clone()
-	clone.Parent = btn.Parent
-	clone.LayoutOrder = btn.LayoutOrder
-	clone.ZIndex = btn.ZIndex
-	clone.Name = btn.Name
+	clone.Parent     = btn.Parent
+	clone.LayoutOrder= btn.LayoutOrder
+	clone.ZIndex     = btn.ZIndex
+	clone.Name       = btn.Name
 	btn:Destroy()
 	return clone
+end
+
+-- Button squish: scale down on press, spring back on release
+local function attachButtonFeedback(btn)
+	if not btn or not btn:IsA("GuiButton") then return end
+	local scale = ensureScale(btn)
+	btn.MouseButton1Down:Connect(function()
+		TweenService:Create(scale, TweenInfo.new(0.08, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Scale = 0.88 }):Play()
+	end)
+	btn.MouseButton1Up:Connect(function()
+		TweenService:Create(scale, T_BTN, { Scale = 1.0 }):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		TweenService:Create(scale, T_BTN, { Scale = 1.0 }):Play()
+	end)
+end
+
+-- ── Core animation ────────────────────────────────────────────
+local function cancelTweens(w)
+	if w._tweens then
+		for _, t in ipairs(w._tweens) do pcall(function() t:Cancel() end) end
+	end
+	w._tweens = {}
+end
+
+local function trackTween(w, t)
+	w._tweens = w._tweens or {}
+	table.insert(w._tweens, t)
+	return t
 end
 
 local function tweenOpen(w)
 	local panel = w.panel
 	local scale = ensureScale(panel)
+	cancelTweens(w)
 
-	panel.Visible = true
+	-- Reset to start state
+	local restPos = w.basePosition
+	local startPos = restPos + UDim2.fromOffset(0, SLIDE_OFFSET)
 
-	if not w.basePosition then
-		w.basePosition = panel.Position
+	panel.Position = startPos
+	scale.Scale    = 0.88
+	panel.Visible  = true
+
+	-- Animate position (springy Back easing = natural overshoot)
+	trackTween(w, TweenService:Create(panel, T_OPEN_POS, { Position = restPos })):Play()
+	-- Animate scale spring
+	trackTween(w, TweenService:Create(scale, T_OPEN_SCALE, { Scale = 1.0 })):Play()
+
+	-- Fade in via CanvasGroup if available, otherwise skip (can't fade text children otherwise)
+	if panel:IsA("CanvasGroup") then
+		panel.GroupTransparency = 1
+		trackTween(w, TweenService:Create(panel, T_OPEN_FADE, { GroupTransparency = 0 })):Play()
 	end
-
-	scale.Scale = 0.94
-	panel.Position = w.basePosition + UDim2.fromOffset(0, 16)
-
-	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
-	TweenService:Create(panel, OPEN_TWEEN, { Position = w.basePosition }):Play()
 end
 
 local function tweenClose(w, onDone)
 	local panel = w.panel
 	local scale = ensureScale(panel)
+	cancelTweens(w)
 
-	local targetPos = (w.basePosition or panel.Position) + UDim2.fromOffset(0, 12)
+	local dropPos = (w.basePosition or panel.Position) + UDim2.fromOffset(0, CLOSE_DROP)
 
-	local t1 = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.96 })
-	local t2 = TweenService:Create(panel, CLOSE_TWEEN, { Position = targetPos })
-	t1:Play()
-	t2:Play()
+	trackTween(w, TweenService:Create(panel, T_CLOSE_POS, { Position = dropPos })):Play()
+	trackTween(w, TweenService:Create(scale, T_CLOSE_SCALE, { Scale = 0.93 })):Play()
 
-	task.delay(CLOSE_TWEEN.Time, function()
+	if panel:IsA("CanvasGroup") then
+		trackTween(w, TweenService:Create(panel, T_CLOSE_FADE, { GroupTransparency = 1 })):Play()
+	end
+
+	task.delay(T_CLOSE_POS.Time, function()
 		if panel and panel.Parent then
-			panel.Visible = false
+			panel.Visible  = false
 			panel.Position = w.basePosition or panel.Position
+			scale.Scale    = 1
+			if panel:IsA("CanvasGroup") then panel.GroupTransparency = 0 end
 		end
 		if onDone then onDone() end
 	end)
 end
 
+-- "Shake" animation: panel is already visible, nudge it to signal it's already open
+local function tweenShake(w)
+	local panel = w.panel
+	local rest  = w.basePosition
+	cancelTweens(w)
+
+	-- Right → left → rest quick shake
+	local function step(offset, delay)
+		task.delay(delay, function()
+			if panel and panel.Parent then
+				trackTween(w, TweenService:Create(panel, T_SHAKE, { Position = rest + UDim2.fromOffset(offset, 0) })):Play()
+			end
+		end)
+	end
+
+	step( 8,    0)
+	step(-8,  0.07)
+	step( 5,  0.14)
+	step(-4,  0.21)
+	step( 0,  0.28)
+end
+
+-- ── Window open/close logic ───────────────────────────────────
 local function closeCurrent(done)
-	if not activeId then
-		if done then done() end
-		return
-	end
+	if not activeId then if done then done() end; return end
 	local w = windows[activeId]
-	if not w then
-		activeId = nil
-		if done then done() end
-		return
-	end
+	if not w then activeId = nil; if done then done() end; return end
 
 	tweenClose(w, function()
 		activeId = nil
@@ -111,84 +206,96 @@ local function openWindow(id)
 	local w = windows[id]
 	if not w or not w.panel then return end
 
+	-- Already open → shake it (don't close/reopen)
+	if activeId == id and w.panel.Visible then
+		tweenShake(w)
+		return
+	end
+
 	busy = true
 
 	local function doOpen()
 		activeId = id
 		tweenOpen(w)
 		if w.onOpen then w.onOpen() end
-		task.delay(OPEN_TWEEN.Time + 0.02, function()
+		task.delay(T_OPEN_POS.Time + 0.05, function()
 			busy = false
 		end)
 	end
 
 	if activeId and activeId ~= id then
-		closeCurrent(doOpen)
-	elseif activeId == id and w.panel.Visible then
-		tweenClose(w, function()
+		-- Start close, but begin open slightly before it finishes (overlap = snappier feel)
+		closeCurrent(nil) -- fire close without waiting for it fully
+		task.delay(CLOSE_OVERLAP, function()
 			activeId = nil
-			busy = false
+			doOpen()
 		end)
 	else
 		doOpen()
 	end
 end
 
+local function closeWindow(id)
+	if busy then return end
+	local w = windows[id]
+	if not w or not w.panel or not w.panel.Visible then return end
+	busy = true
+	tweenClose(w, function()
+		if activeId == id then activeId = nil end
+		busy = false
+	end)
+end
+
+-- ── Window registration ───────────────────────────────────────
 local function registerWindow(def)
 	local panel = findFirstByNames(gameGui, def.panelNames)
 	if not panel or not panel:IsA("GuiObject") then
-		warn("[UIWindowsController] Missing panel for", def.id)
-		return
+		warn("[UIWindowsController] Missing panel for", def.id); return
 	end
 
 	local openBtn = findFirstByNames(gameGui, def.openBtnNames)
 	if not openBtn or not openBtn:IsA("GuiButton") then
-		warn("[UIWindowsController] Missing open button for", def.id)
-		return
+		warn("[UIWindowsController] Missing open button for", def.id); return
 	end
 
 	local closeBtn = findFirstByNames(panel, { "CloseBtn", "Close", "XBtn" })
 
-	-- Replace buttons to clear old conflicting click handlers.
-	openBtn = replaceButton(openBtn)
+	openBtn  = replaceButton(openBtn)
 	if closeBtn then closeBtn = replaceButton(closeBtn) end
 
 	local w = {
-		id = def.id,
-		panel = panel,
-		openBtn = openBtn,
-		closeBtn = closeBtn,
+		id           = def.id,
+		panel        = panel,
+		openBtn      = openBtn,
+		closeBtn     = closeBtn,
 		basePosition = panel.Position,
-		onOpen = def.onOpen,
+		onOpen       = def.onOpen,
+		_tweens      = {},
 	}
 
 	windows[def.id] = w
-	panel.Visible = false
+	panel.Visible   = false
 	ensureScale(panel).Scale = 1
+	if panel:IsA("CanvasGroup") then panel.GroupTransparency = 0 end
+
+	attachButtonFeedback(openBtn)
 
 	openBtn.MouseButton1Click:Connect(function()
 		openWindow(def.id)
 	end)
 
 	if closeBtn and closeBtn:IsA("GuiButton") then
+		attachButtonFeedback(closeBtn)
 		closeBtn.MouseButton1Click:Connect(function()
-			if busy then return end
-			if activeId == def.id then
-				busy = true
-				tweenClose(w, function()
-					activeId = nil
-					busy = false
-				end)
-			else
-				panel.Visible = false
-			end
+			closeWindow(def.id)
 		end)
 	end
 end
 
+-- ── Register all windows ──────────────────────────────────────
 registerWindow({
-	id = "shop",
-	panelNames = { "ShopF" },
+	id           = "shop",
+	panelNames   = { "ShopF" },
 	openBtnNames = { "OpenShopBtn" },
 	onOpen = function()
 		if ShopRequestRefresh and ShopRequestRefresh:IsA("RemoteEvent") then
@@ -198,8 +305,8 @@ registerWindow({
 })
 
 registerWindow({
-	id = "rewards",
-	panelNames = { "RewardsF" },
+	id           = "rewards",
+	panelNames   = { "RewardsF" },
 	openBtnNames = { "OpenRewardsBtn" },
 	onOpen = function()
 		if RewardRequestSync and RewardRequestSync:IsA("RemoteEvent") then
@@ -209,17 +316,14 @@ registerWindow({
 })
 
 registerWindow({
-	id = "inventory",
-	panelNames = { "ChairInvPanel", "InventoryF", "InvF" },
+	id           = "inventory",
+	panelNames   = { "ChairInvPanel", "InventoryF", "InvF" },
 	openBtnNames = { "OpenChairInvBtn", "OpenChairInventoryBtn", "OpenInventoryBtn", "OpenInvBtn" },
 	onOpen = function()
-		-- optional refresh; only if RequestSync exists as RemoteFunction
 		if RequestSync and RequestSync:IsA("RemoteFunction") then
-			pcall(function()
-				RequestSync:InvokeServer()
-			end)
+			pcall(function() RequestSync:InvokeServer() end)
 		end
 	end,
 })
 
-print("[UIWindowsController] Ready")
+print("[UIWindowsController] Ready v2")
