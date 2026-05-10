@@ -6,14 +6,8 @@ local UIS = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
-local waited = 0
-while not _G.Frames and waited < 10 do
+while not _G.Frames do
 	task.wait(0.1)
-	waited += 0.1
-end
-if not _G.Frames then
-	warn("[CH] GuiBuilder not ready")
-	return
 end
 
 local F = _G.Frames
