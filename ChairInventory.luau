@@ -116,10 +116,24 @@ local function rebuildUI()
 	end
 end
 
+local function sanitizeOwned(list)
+	if type(list) ~= "table" then return {} end
+	local out = {}
+	local seen = {}
+	for _, v in ipairs(list) do
+		if type(v) == "string" and v ~= "" and not seen[v] then
+			seen[v] = true
+			table.insert(out, v)
+			if #out >= 80 then break end -- safety cap
+		end
+	end
+	return out
+end
+
 local function mergeData(incoming)
 	if type(incoming) ~= "table" then return end
 	if type(incoming.owned) == "table" then
-		state.owned = incoming.owned
+		state.owned = sanitizeOwned(incoming.owned)
 	end
 	if type(incoming.equipped) == "string" and incoming.equipped ~= "" then
 		state.equipped = incoming.equipped
