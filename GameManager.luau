@@ -48,6 +48,7 @@ _G.GetSessionByPlayer = function(player)
 	local s = sessions[tableId]
 	if s and s.active then return s end
 	return nil
+	
 end
 
 local function countryListForLetter(letter)
@@ -136,6 +137,7 @@ end
 local function fireBoth(session, remote, ...)
 	if session.playerA then remote:FireClient(session.playerA, ...) end
 	if session.playerB then remote:FireClient(session.playerB, ...) end
+	
 end
 
 local function clearSession(tableId)
@@ -150,12 +152,14 @@ local function clearSession(tableId)
 	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
 		_G.SeatManager.setTablePromptEnabled(tableId, true)
 	end
-
+	if session.playerA then playerToTable[session.playerA.UserId] = nil end
+	if session.playerB then playerToTable[session.playerB.UserId] = nil end
 	setTableStatus(tableId, "")
 	setTableCountdown(tableId, 0)
 end
 
 local function endSessionWithWinner(tableId, winner, reason)
+	
 	local session = sessions[tableId]
 	if not session or not session.active or session.ending then return end
 
@@ -164,7 +168,9 @@ local function endSessionWithWinner(tableId, winner, reason)
 	session.token += 1
 
 	local loser = getOtherPlayer(session, winner)
-
+	if _G.DailyQuestMarkWinWithFriend then
+		_G.DailyQuestMarkWinWithFriend(winner, loser)
+	end
 	-- Reward winner + reset loser streak
 	awardWinner(winner)
 	resetLoserStreak(loser)
@@ -219,6 +225,7 @@ local function openTurn(session)
 
 	session.phase = "turn"
 	session.token += 1
+	session.started = true
 	local token = session.token
 
 	local mySlot = getSlot(session, turnPlayer)
@@ -319,6 +326,7 @@ local function createSession(tableId, playerA, playerB)
 		tableId = tableId,
 		playerA = playerA,
 		playerB = playerB,
+		started = false,
 		active = true,
 		ending = false,
 		phase = "countdown",
@@ -344,7 +352,9 @@ local function createSession(tableId, playerA, playerB)
 	end
 
 	setTableStatus(tableId, "Both players are ready")
-
+	if _G.DailyQuestMarkPlayedWithFriend then
+		_G.DailyQuestMarkPlayedWithFriend(playerA, playerB)
+	end
 	task.spawn(function()
 		for t = CFG.COUNTDOWN_START, 1, -1 do
 			if not session.active then return end
@@ -359,11 +369,42 @@ end
 _G.OnBothSeated = function(tableId, playerA, playerB)
 	createSession(tableId, playerA, playerB)
 end
+local function cancelSessionNoWinner(tableId, reason)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
 
+	session.active = false
+	session.ending = true
+	session.token += 1
+
+	-- Optional info message (no rewards)
+	fireBoth(session, E.ShowWait, reason or "Match cancelled", nil, nil, nil)
+
+	-- Stand both players safely
+	task.delay(0.2, function()
+		if _G.SeatManager and _G.SeatManager.standPlayer then
+			if session.playerA then _G.SeatManager.standPlayer(session.playerA) end
+			if session.playerB then _G.SeatManager.standPlayer(session.playerB) end
+		end
+	end)
+
+	task.delay(0.5, function()
+		clearSession(tableId)
+	end)
+end
 _G.OnPlayerStood = function(player, tableId)
 	local session = sessions[tableId]
 	if not session or not session.active then return end
+
 	local other = getOtherPlayer(session, player)
+
+	-- If gameplay has not started yet, cancel session without winner/rewards.
+	if not session.started then
+		cancelSessionNoWinner(tableId, "Player left before match start")
+		return
+	end
+
+	-- Gameplay started: leaving counts as forfeit.
 	if other then
 		endSessionWithWinner(tableId, other, "opponent_left")
 	else
@@ -553,6 +594,12 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 
 	local other = getOtherPlayer(session, player)
+
+	if not session.started then
+		cancelSessionNoWinner(tableId, "Player disconnected before match start")
+		return
+	end
+
 	if other then
 		endSessionWithWinner(tableId, other, "opponent_left")
 	else
