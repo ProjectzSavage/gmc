@@ -1,0 +1,130 @@
+local TweenService = game:GetService("TweenService")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local ContentProvider = game:GetService("ContentProvider")
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local doloadedsound = true
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+ReplicatedFirst:RemoveDefaultLoadingScreen()
+
+local UI = script:WaitForChild("LoadUIV2"):Clone()
+UI.Parent = playerGui
+
+local loaded = false
+local cancelled = false
+
+local function createTween(object, properties, duration, easingStyle, easingDirection, delayTime)
+	local tweenInfo = TweenInfo.new(
+		duration,
+		Enum.EasingStyle[easingStyle],
+		Enum.EasingDirection[easingDirection],
+		0,
+		false,
+		delayTime or 0
+	)
+	return TweenService:Create(object, tweenInfo, properties)
+end
+
+local function collectPreloadAssets()
+	local list = {}
+	local function add(inst)
+		-- Keep this list to assets that actually need content loading.
+		if inst:IsA("ImageLabel") or inst:IsA("ImageButton")
+			or inst:IsA("Decal") or inst:IsA("Texture")
+			or inst:IsA("MeshPart") or inst:IsA("SpecialMesh")
+			or inst:IsA("Sound") or inst:IsA("Animation")
+			or inst:IsA("ParticleEmitter") or inst:IsA("Trail")
+			or inst:IsA("Beam") or inst:IsA("Sky")
+		then
+			table.insert(list, inst)
+		end
+	end
+
+	-- Prioritize replicated client-visible content.
+	for _, d in ipairs(RS:GetDescendants()) do add(d) end
+	for _, d in ipairs(game.StarterGui:GetDescendants()) do add(d) end
+	for _, d in ipairs(workspace:GetDescendants()) do add(d) end
+
+	return list
+end
+
+local function preloadInBatches(assets)
+	local total = #assets
+	if total == 0 then return end
+
+	local batchSize = 50
+	local index = 1
+
+	while index <= total and not cancelled do
+		local batch = {}
+		for i = index, math.min(index + batchSize - 1, total) do
+			table.insert(batch, assets[i])
+			UI.Background.StatsLabel.Text = "Loading Assets: [" .. i .. "/" .. total .. "]"
+			UI.Background.AssetsLabel.Text = "(" .. assets[i].Name .. ")"
+		end
+
+		pcall(function()
+			ContentProvider:PreloadAsync(batch)
+		end)
+
+		index += batchSize
+		task.wait()
+	end
+end
+
+local function finishLoading()
+	loaded = true
+
+	if doloadedsound and UI and UI.Parent and UI.Background:FindFirstChild("loadedSound") then
+		UI.Background.loadedSound:Play()
+	end
+
+	UI.Background.StatsLabel.Text = cancelled and "Skipped!" or "Finished!"
+	task.wait(1)
+
+	createTween(UI.Background.SkipButton, {Position = UDim2.new(0.434, 0, 1.1, 0)}, 0.6, "Quad", "InOut", 0):Play()
+	task.wait(0.2)
+	createTween(UI.Background.AssetsLabel, {Position = UDim2.new(0.402, 0, 1.2, 0)}, 0.6, "Quad", "InOut", 0):Play()
+	task.wait(0.2)
+	createTween(UI.Background.StatsLabel, {Position = UDim2.new(0.402, 0, 1.2, 0)}, 0.6, "Quad", "InOut", 0):Play()
+	task.wait(0.2)
+	createTween(UI.Background, {Transparency = 1, ImageTransparency = 1}, 0.6, "Quad", "InOut", 0):Play()
+	task.wait(0.2)
+	createTween(UI.Background.GameImage, {Size = UDim2.new(0.248, 0, 0.42, 0), ImageTransparency = 1}, 0.8, "Quad", "InOut", 0):Play()
+	task.wait(0.9)
+
+	if UI then UI:Destroy() end
+
+	local finishEvent = ReplicatedFirst:FindFirstChild("LoadingFinished")
+	if not finishEvent or not finishEvent:IsA("BindableEvent") then
+		if finishEvent then finishEvent:Destroy() end
+		finishEvent = Instance.new("BindableEvent")
+		finishEvent.Name = "LoadingFinished"
+		finishEvent.Parent = ReplicatedFirst
+	end
+	finishEvent:Fire()
+end
+
+UI.Background.SkipButton.Activated:Connect(function()
+	cancelled = true
+end)
+
+task.spawn(function()
+	local assets = collectPreloadAssets()
+	preloadInBatches(assets)
+
+	-- Also wait for core runtime folders/UI
+	playerGui:WaitForChild("GameGui")
+	RS:WaitForChild("Events")
+
+	finishLoading()
+end)
+
+task.delay(6.5, function()
+	if not loaded and UI and UI.Parent then
+		createTween(UI.Background.SkipButton, {Position = UDim2.new(0.434, 0, 0.812, 0)}, 0.8, "Quad", "InOut", 0):Play()
+	end
+end)
