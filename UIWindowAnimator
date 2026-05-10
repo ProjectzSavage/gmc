@@ -1,197 +1,101 @@
--- A_UIWindowAnimator v3
--- Owns ALL open/close button wiring. Other scripts must NEVER connect open/close buttons.
--- Animations: spring-in from below, decisive snap-out close with scale+fade.
-
+-- A_UIWindowAnimator
+-- Shared open/close animation + single-active-window behavior
 local TweenService = game:GetService("TweenService")
-local Players      = game:GetService("Players")
-local player       = Players.LocalPlayer
-local gameGui      = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+local Players = game:GetService("Players")
 
-local windows  = {}
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+
+local windows = {}
 local activeId = nil
-local locked   = false  -- true while a close animation is in flight
 
--- ── Tween presets ──────────────────────────────────────────────
--- Open: spring up from below, snappy overshoot
-local TI_OPEN_POS   = TweenInfo.new(0.40, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
-local TI_OPEN_SCALE = TweenInfo.new(0.40, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
-local TI_OPEN_FADE  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local OPEN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 
--- Close: fast, snappy, goes DOWN and shrinks decisively
-local TI_CLOSE_POS   = TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local TI_CLOSE_SCALE = TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local TI_CLOSE_FADE  = TweenInfo.new(0.20, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-
-local OPEN_SLIDE  = 55   -- px below rest the panel starts on open
-local CLOSE_DROP  = 40   -- px the panel drops on close (bigger = more decisive)
-local CLOSE_SCALE = 0.82 -- scale target on close (smaller = more visible snap)
-local CLOSE_TIME  = 0.24 -- must match TI_CLOSE_POS.Time
-
--- ── Tween tracker (cancel mid-flight tweens) ───────────────────
-local activeTweens = {}
-
-local function cancelTweens(id)
-	if activeTweens[id] then
-		for _, t in ipairs(activeTweens[id]) do
-			pcall(function() t:Cancel() end)
-		end
-	end
-	activeTweens[id] = {}
-end
-
-local function play(id, tween)
-	activeTweens[id] = activeTweens[id] or {}
-	table.insert(activeTweens[id], tween)
-	tween:Play()
-end
-
--- ── UIScale helper ─────────────────────────────────────────────
 local function ensureScale(panel)
-	local s = panel:FindFirstChild("UIWindowScale")
-	if not s then
-		s = Instance.new("UIScale")
-		s.Name   = "UIWindowScale"
-		s.Scale  = 1
-		s.Parent = panel
+	local scale = panel:FindFirstChild("UIWindowScale")
+	if not scale then
+		scale = Instance.new("UIScale")
+		scale.Name = "UIWindowScale"
+		scale.Scale = 1
+		scale.Parent = panel
 	end
-	return s
+	return scale
 end
 
--- ── Animations ─────────────────────────────────────────────────
-local function animOpen(id)
-	local w = windows[id]
-	if not w then return end
-	local panel = w.panel
-	local scale = ensureScale(panel)
-	cancelTweens(id)
-
-	-- Start state: below + small + invisible (if CanvasGroup)
-	panel.Position = w.basePos + UDim2.fromOffset(0, OPEN_SLIDE)
-	scale.Scale    = 0.86
-	panel.Visible  = true
-
-	play(id, TweenService:Create(panel, TI_OPEN_POS,   { Position = w.basePos }))
-	play(id, TweenService:Create(scale, TI_OPEN_SCALE, { Scale    = 1.0 }))
-
-	if panel:IsA("CanvasGroup") then
-		panel.GroupTransparency = 1
-		play(id, TweenService:Create(panel, TI_OPEN_FADE, { GroupTransparency = 0 }))
-	end
-end
-
-local function animClose(id, onDone)
-	local w = windows[id]
-	if not w then if onDone then onDone() end; return end
-	local panel = w.panel
-	local scale = ensureScale(panel)
-	cancelTweens(id)
-
-	-- Animate: drop down, shrink, fade
-	local dropPos = w.basePos + UDim2.fromOffset(0, CLOSE_DROP)
-	play(id, TweenService:Create(panel, TI_CLOSE_POS,   { Position = dropPos }))
-	play(id, TweenService:Create(scale, TI_CLOSE_SCALE, { Scale    = CLOSE_SCALE }))
-
-	if panel:IsA("CanvasGroup") then
-		play(id, TweenService:Create(panel, TI_CLOSE_FADE, { GroupTransparency = 1 }))
-	end
-
-	-- After animation: hide + reset state
-	task.delay(CLOSE_TIME, function()
-		if panel and panel.Parent then
-			panel.Visible  = false
-			panel.Position = w.basePos
-			scale.Scale    = 1
-			if panel:IsA("CanvasGroup") then panel.GroupTransparency = 0 end
-		end
-		if onDone then onDone() end
-	end)
-end
-
--- ── Public: open, close, toggle ────────────────────────────────
 local function openWindow(id)
-	if locked then return end
 	local w = windows[id]
 	if not w or not w.panel then return end
 
-	-- Already open: do nothing (no shake, no re-open)
-	if activeId == id and w.panel.Visible then return end
-
 	if activeId and activeId ~= id then
-		-- Close current first, then open new — no overlap (prevents on-top bug)
-		local prevId = activeId
-		activeId = nil
-		locked   = true
-		animClose(prevId, function()
-			locked   = false
-			activeId = id
-			animOpen(id)
-			if w.onOpen then w.onOpen() end
-		end)
-	else
-		activeId = id
-		animOpen(id)
-		if w.onOpen then w.onOpen() end
+		local old = windows[activeId]
+		if old and old.panel then
+			local oldScale = ensureScale(old.panel)
+			TweenService:Create(oldScale, CLOSE_TWEEN, { Scale = 0.95 }):Play()
+			task.delay(CLOSE_TWEEN.Time, function()
+				if old.panel then old.panel.Visible = false end
+			end)
+		end
 	end
+
+	activeId = id
+	w.panel.Visible = true
+	local s = ensureScale(w.panel)
+	s.Scale = 0.95
+	TweenService:Create(s, OPEN_TWEEN, { Scale = 1 }):Play()
 end
 
 local function closeWindow(id)
-	if locked then return end
 	local w = windows[id]
-	if not w or not w.panel or not w.panel.Visible then return end
-	locked = true
-	animClose(id, function()
+	if not w or not w.panel then return end
+
+	local s = ensureScale(w.panel)
+	TweenService:Create(s, CLOSE_TWEEN, { Scale = 0.95 }):Play()
+	task.delay(CLOSE_TWEEN.Time, function()
+		if w.panel then w.panel.Visible = false end
 		if activeId == id then activeId = nil end
-		locked = false
 	end)
 end
 
 local function toggleWindow(id)
-	if locked then return end
-	if activeId == id and windows[id] and windows[id].panel.Visible then
+	local w = windows[id]
+	if not w or not w.panel then return end
+
+	if activeId == id and w.panel.Visible then
 		closeWindow(id)
 	else
 		openWindow(id)
 	end
 end
 
--- ── Register ───────────────────────────────────────────────────
--- Other scripts call this. They must NOT connect their own click handlers
--- to openBtn or closeBtn after calling register.
-local function register(id, panel, openBtn, closeBtn, onOpen)
-	if not id or not panel then return end
-
-	windows[id] = {
-		panel   = panel,
-		basePos = panel.Position,
-		onOpen  = onOpen,
-	}
-	activeTweens[id] = {}
-
-	panel.Visible = false
-	ensureScale(panel).Scale = 1
-	if panel:IsA("CanvasGroup") then panel.GroupTransparency = 0 end
-
-	-- UIWindowAnimator owns these connections — no one else should wire these buttons
-	if openBtn and openBtn:IsA("GuiButton") then
-		openBtn.MouseButton1Click:Connect(function()
-			toggleWindow(id)
-		end)
-	end
-
-	if closeBtn and closeBtn:IsA("GuiButton") then
-		closeBtn.MouseButton1Click:Connect(function()
-			closeWindow(id)
-		end)
+local function safeConnect(btn, fn)
+	if btn and btn:IsA("GuiButton") then
+		btn.MouseButton1Click:Connect(fn)
 	end
 end
 
--- ── Export ─────────────────────────────────────────────────────
+local function register(id, panel, openBtn, closeBtn)
+	if not id or not panel then return end
+	windows[id] = { panel = panel, openBtn = openBtn, closeBtn = closeBtn }
+
+	panel.Visible = false
+	ensureScale(panel).Scale = 1
+
+	safeConnect(openBtn, function()
+		toggleWindow(id)
+	end)
+
+	safeConnect(closeBtn, function()
+		closeWindow(id)
+	end)
+end
+
 _G.UIWindowAnimator = {
-	register    = register,
-	open        = openWindow,
-	close       = closeWindow,
-	toggle      = toggleWindow,
+	register = register,
+	open = openWindow,
+	close = closeWindow,
+	toggle = toggleWindow,
 	getActiveId = function() return activeId end,
 }
 
-print("[UIWindowAnimator] Ready v3")
+print("[UIWindowAnimator] Ready")
