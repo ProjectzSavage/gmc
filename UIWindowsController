@@ -1,6 +1,5 @@
 -- UIWindowsController
--- Animated open/close for Shop, Rewards, Inventory
--- Only one window open at a time
+-- Better open/close animation + one active window at a time
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -12,10 +11,10 @@ local events = RS:WaitForChild("Events")
 
 local ShopRequestRefresh = events:FindFirstChild("ShopRequestRefresh")
 local RewardRequestSync = events:FindFirstChild("RewardRequestSync")
-local RequestSync = events:FindFirstChild("RequestSync") -- chair inventory remote (RemoteFunction)
+local RequestSync = events:FindFirstChild("RequestSync") -- RemoteFunction for inventory refresh
 
-local OPEN_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local CLOSE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local OPEN_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 
 local windows = {}
 local activeId = nil
@@ -43,12 +42,87 @@ end
 local function replaceButton(btn)
 	if not btn or not btn:IsA("GuiButton") then return nil end
 	local clone = btn:Clone()
-	clone.Parent = btn.Parent
+	clone.Name = btn.Name
 	clone.LayoutOrder = btn.LayoutOrder
 	clone.ZIndex = btn.ZIndex
-	clone.Name = btn.Name
+	clone.Parent = btn.Parent
 	btn:Destroy()
 	return clone
+end
+
+local function captureVisualProps(panel)
+	local props = {}
+
+	local function add(obj)
+		local p = {}
+
+		if obj:IsA("GuiObject") then
+			p.bg = obj.BackgroundTransparency
+		end
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+			p.text = obj.TextTransparency
+			p.stroke = obj.TextStrokeTransparency
+		end
+		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") or obj:IsA("ViewportFrame") then
+			p.image = obj.ImageTransparency
+		end
+		if obj:IsA("UIStroke") then
+			p.uiStroke = obj.Transparency
+		end
+
+		if next(p) then
+			props[obj] = p
+		end
+	end
+
+	add(panel)
+	for _, obj in ipairs(panel:GetDescendants()) do
+		add(obj)
+	end
+
+	return props
+end
+
+local function applyAlpha(props, alpha)
+	for obj, p in pairs(props) do
+		if obj and obj.Parent then
+			if p.bg ~= nil and obj:IsA("GuiObject") then
+				obj.BackgroundTransparency = p.bg + (1 - p.bg) * alpha
+			end
+			if p.text ~= nil and (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then
+				obj.TextTransparency = p.text + (1 - p.text) * alpha
+			end
+			if p.stroke ~= nil and (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then
+				obj.TextStrokeTransparency = p.stroke + (1 - p.stroke) * alpha
+			end
+			if p.image ~= nil and (obj:IsA("ImageLabel") or obj:IsA("ImageButton") or obj:IsA("ViewportFrame")) then
+				obj.ImageTransparency = p.image + (1 - p.image) * alpha
+			end
+			if p.uiStroke ~= nil and obj:IsA("UIStroke") then
+				obj.Transparency = p.uiStroke + (1 - p.uiStroke) * alpha
+			end
+		end
+	end
+end
+
+local function animateAlpha(props, fromAlpha, toAlpha, tweenInfo, onDone)
+	local driver = Instance.new("NumberValue")
+	driver.Value = fromAlpha
+
+	local conn
+	conn = driver:GetPropertyChangedSignal("Value"):Connect(function()
+		applyAlpha(props, driver.Value)
+	end)
+
+	applyAlpha(props, fromAlpha)
+
+	local tween = TweenService:Create(driver, tweenInfo, { Value = toAlpha })
+	tween:Play()
+	tween.Completed:Connect(function()
+		if conn then conn:Disconnect() end
+		driver:Destroy()
+		if onDone then onDone() end
+	end)
 end
 
 local function tweenOpen(w)
@@ -56,13 +130,10 @@ local function tweenOpen(w)
 	local scale = ensureScale(panel)
 
 	panel.Visible = true
-
-	if not w.basePosition then
-		w.basePosition = panel.Position
-	end
-
-	scale.Scale = 0.94
 	panel.Position = w.basePosition + UDim2.fromOffset(0, 16)
+	scale.Scale = 0.92
+
+	animateAlpha(w.props, 1, 0, OPEN_TWEEN)
 
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
 	TweenService:Create(panel, OPEN_TWEEN, { Position = w.basePosition }):Play()
@@ -72,44 +143,43 @@ local function tweenClose(w, onDone)
 	local panel = w.panel
 	local scale = ensureScale(panel)
 
-	local targetPos = (w.basePosition or panel.Position) + UDim2.fromOffset(0, 12)
+	local endPos = w.basePosition + UDim2.fromOffset(0, 18)
 
-	local t1 = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.96 })
-	local t2 = TweenService:Create(panel, CLOSE_TWEEN, { Position = targetPos })
-	t1:Play()
-	t2:Play()
-
-	task.delay(CLOSE_TWEEN.Time, function()
+	animateAlpha(w.props, 0, 1, CLOSE_TWEEN, function()
 		if panel and panel.Parent then
 			panel.Visible = false
-			panel.Position = w.basePosition or panel.Position
+			panel.Position = w.basePosition
 		end
 		if onDone then onDone() end
 	end)
+
+	TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.92 }):Play()
+	TweenService:Create(panel, CLOSE_TWEEN, { Position = endPos }):Play()
 end
 
-local function closeCurrent(done)
+local function closeActiveThen(callback)
 	if not activeId then
-		if done then done() end
-		return
-	end
-	local w = windows[activeId]
-	if not w then
-		activeId = nil
-		if done then done() end
+		if callback then callback() end
 		return
 	end
 
-	tweenClose(w, function()
+	local current = windows[activeId]
+	if not current then
 		activeId = nil
-		if done then done() end
+		if callback then callback() end
+		return
+	end
+
+	tweenClose(current, function()
+		activeId = nil
+		if callback then callback() end
 	end)
 end
 
 local function openWindow(id)
 	if busy then return end
 	local w = windows[id]
-	if not w or not w.panel then return end
+	if not w then return end
 
 	busy = true
 
@@ -117,13 +187,13 @@ local function openWindow(id)
 		activeId = id
 		tweenOpen(w)
 		if w.onOpen then w.onOpen() end
-		task.delay(OPEN_TWEEN.Time + 0.02, function()
+		task.delay(OPEN_TWEEN.Time + 0.03, function()
 			busy = false
 		end)
 	end
 
 	if activeId and activeId ~= id then
-		closeCurrent(doOpen)
+		closeActiveThen(doOpen)
 	elseif activeId == id and w.panel.Visible then
 		tweenClose(w, function()
 			activeId = nil
@@ -134,22 +204,34 @@ local function openWindow(id)
 	end
 end
 
+local function closeWindow(id)
+	if busy then return end
+	local w = windows[id]
+	if not w then return end
+
+	busy = true
+	tweenClose(w, function()
+		if activeId == id then activeId = nil end
+		busy = false
+	end)
+end
+
 local function registerWindow(def)
 	local panel = findFirstByNames(gameGui, def.panelNames)
 	if not panel or not panel:IsA("GuiObject") then
-		warn("[UIWindowsController] Missing panel for", def.id)
+		warn("[UIWindowsController] Missing panel:", def.id)
 		return
 	end
 
 	local openBtn = findFirstByNames(gameGui, def.openBtnNames)
 	if not openBtn or not openBtn:IsA("GuiButton") then
-		warn("[UIWindowsController] Missing open button for", def.id)
+		warn("[UIWindowsController] Missing open button:", def.id)
 		return
 	end
 
 	local closeBtn = findFirstByNames(panel, { "CloseBtn", "Close", "XBtn" })
 
-	-- Replace buttons to clear old conflicting click handlers.
+	-- Replace buttons to remove any old conflicting click connections.
 	openBtn = replaceButton(openBtn)
 	if closeBtn then closeBtn = replaceButton(closeBtn) end
 
@@ -159,12 +241,14 @@ local function registerWindow(def)
 		openBtn = openBtn,
 		closeBtn = closeBtn,
 		basePosition = panel.Position,
+		props = captureVisualProps(panel),
 		onOpen = def.onOpen,
 	}
-
 	windows[def.id] = w
+
 	panel.Visible = false
 	ensureScale(panel).Scale = 1
+	applyAlpha(w.props, 0) -- keep original visual state while hidden
 
 	openBtn.MouseButton1Click:Connect(function()
 		openWindow(def.id)
@@ -172,16 +256,7 @@ local function registerWindow(def)
 
 	if closeBtn and closeBtn:IsA("GuiButton") then
 		closeBtn.MouseButton1Click:Connect(function()
-			if busy then return end
-			if activeId == def.id then
-				busy = true
-				tweenClose(w, function()
-					activeId = nil
-					busy = false
-				end)
-			else
-				panel.Visible = false
-			end
+			closeWindow(def.id)
 		end)
 	end
 end
@@ -213,7 +288,6 @@ registerWindow({
 	panelNames = { "ChairInvPanel", "InventoryF", "InvF" },
 	openBtnNames = { "OpenChairInvBtn", "OpenChairInventoryBtn", "OpenInventoryBtn", "OpenInvBtn" },
 	onOpen = function()
-		-- optional refresh; only if RequestSync exists as RemoteFunction
 		if RequestSync and RequestSync:IsA("RemoteFunction") then
 			pcall(function()
 				RequestSync:InvokeServer()
@@ -221,5 +295,11 @@ registerWindow({
 		end
 	end,
 })
+
+_G.UIWindows = {
+	open = openWindow,
+	close = closeWindow,
+	getActive = function() return activeId end,
+}
 
 print("[UIWindowsController] Ready")
