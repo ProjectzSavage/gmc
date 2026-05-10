@@ -20,7 +20,6 @@ local ChairsRoot = RS:WaitForChild("Chairs")
 local ShopChairs = ChairsRoot:WaitForChild("ShopChairs")
 local EquippableChairs = ChairsRoot:WaitForChild("EquippableChairs")
 
--- cache prevents disappearing rows when server sends partial ChairSync payload
 local state = {
 	owned = {},
 	equipped = "Default",
@@ -40,9 +39,7 @@ local function setupViewport(vp, chairName)
 	clearViewport(vp)
 
 	local model = getChairModel(chairName)
-	if not model then
-		return
-	end
+	if not model then return end
 
 	local world = Instance.new("WorldModel")
 	world.Parent = vp
@@ -64,9 +61,8 @@ local function setupViewport(vp, chairName)
 	local cf, size = clone:GetBoundingBox()
 	local center = cf.Position
 	local radius = math.max(size.X, size.Y, size.Z)
-
-	-- closer camera = larger icon
 	local dist = math.max(radius * 1.35, 2.2)
+
 	cam.CFrame = CFrame.new(center + Vector3.new(dist, dist * 0.45, dist), center)
 end
 
@@ -95,9 +91,8 @@ local function rebuildUI()
 			vp.Parent = row
 		end
 
-		-- bigger viewport
-		vp.Size = UDim2.new(0, 130, 0, 130)
-		vp.Position = UDim2.new(0, 10, 0.5, -65)
+		vp.Size = UDim2.new(0, 180, 0, 180)
+		vp.Position = UDim2.new(0, -26, 0.45, -90)
 		vp.BackgroundTransparency = 1
 		vp.BorderSizePixel = 0
 
@@ -123,11 +118,9 @@ end
 
 local function mergeData(incoming)
 	if type(incoming) ~= "table" then return end
-
 	if type(incoming.owned) == "table" then
 		state.owned = incoming.owned
 	end
-
 	if type(incoming.equipped) == "string" and incoming.equipped ~= "" then
 		state.equipped = incoming.equipped
 	end
