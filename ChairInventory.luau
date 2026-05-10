@@ -20,14 +20,20 @@ local ChairsRoot = RS:WaitForChild("Chairs")
 local ShopChairs = ChairsRoot:WaitForChild("ShopChairs")
 local EquippableChairs = ChairsRoot:WaitForChild("EquippableChairs")
 
+-- cache prevents disappearing rows when server sends partial ChairSync payload
+local state = {
+	owned = {},
+	equipped = "Default",
+}
+
+local function getChairModel(name)
+	return ShopChairs:FindFirstChild(name) or EquippableChairs:FindFirstChild(name)
+end
+
 local function clearViewport(vp)
 	for _, c in ipairs(vp:GetChildren()) do
 		c:Destroy()
 	end
-end
-
-local function getChairModel(name)
-	return ShopChairs:FindFirstChild(name) or EquippableChairs:FindFirstChild(name)
 end
 
 local function setupViewport(vp, chairName)
@@ -38,14 +44,12 @@ local function setupViewport(vp, chairName)
 		return
 	end
 
-	-- WorldModel is required for reliable viewport rendering
 	local world = Instance.new("WorldModel")
 	world.Parent = vp
 
 	local clone = model:Clone()
 	clone.Parent = world
 
-	-- Anchor all parts so viewport preview is stable
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("BasePart") then
 			d.Anchored = true
@@ -60,22 +64,20 @@ local function setupViewport(vp, chairName)
 	local cf, size = clone:GetBoundingBox()
 	local center = cf.Position
 	local radius = math.max(size.X, size.Y, size.Z)
-	local dist = radius * 2.2 + 1.5
 
-	cam.CFrame = CFrame.new(center + Vector3.new(dist, dist * 0.55, dist), center)
+	-- closer camera = larger icon
+	local dist = math.max(radius * 1.35, 2.2)
+	cam.CFrame = CFrame.new(center + Vector3.new(dist, dist * 0.45, dist), center)
 end
 
-local function updateUI(data)
-	if type(data) ~= "table" then return end
-
+local function rebuildUI()
 	for _, child in ipairs(Grid:GetChildren()) do
 		if child:IsA("Frame") and child.Name ~= "Template" then
 			child:Destroy()
 		end
 	end
 
-	local owned = data.owned or {}
-	for _, chairName in ipairs(owned) do
+	for _, chairName in ipairs(state.owned) do
 		local row = Template:Clone()
 		row.Name = chairName
 		row.Visible = true
@@ -90,17 +92,20 @@ local function updateUI(data)
 		if not vp then
 			vp = Instance.new("ViewportFrame")
 			vp.Name = "ViewportFrame"
-			vp.Size = UDim2.new(0, 96, 0, 96)
-			vp.Position = UDim2.new(0, 8, 0.5, -48)
-			vp.BackgroundTransparency = 1
-			vp.BorderSizePixel = 0
 			vp.Parent = row
 		end
+
+		-- bigger viewport
+		vp.Size = UDim2.new(0, 130, 0, 130)
+		vp.Position = UDim2.new(0, 10, 0.5, -65)
+		vp.BackgroundTransparency = 1
+		vp.BorderSizePixel = 0
+
 		setupViewport(vp, chairName)
 
 		local equipBtn = row:FindFirstChild("EquipBtn")
 		if equipBtn and equipBtn:IsA("TextButton") then
-			if data.equipped == chairName then
+			if state.equipped == chairName then
 				equipBtn.Text = "Equipped"
 				equipBtn.BackgroundColor3 = Color3.fromRGB(85, 255, 127)
 			else
@@ -116,13 +121,29 @@ local function updateUI(data)
 	end
 end
 
+local function mergeData(incoming)
+	if type(incoming) ~= "table" then return end
+
+	if type(incoming.owned) == "table" then
+		state.owned = incoming.owned
+	end
+
+	if type(incoming.equipped) == "string" and incoming.equipped ~= "" then
+		state.equipped = incoming.equipped
+	end
+end
+
 task.spawn(function()
 	local ok, data = pcall(function()
 		return RequestSync:InvokeServer()
 	end)
 	if ok then
-		updateUI(data)
+		mergeData(data)
+		rebuildUI()
 	end
 end)
 
-ChairSync.OnClientEvent:Connect(updateUI)
+ChairSync.OnClientEvent:Connect(function(data)
+	mergeData(data)
+	rebuildUI()
+end)
