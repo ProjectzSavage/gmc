@@ -1,7 +1,13 @@
--- StarterGui/TableBillboardHandler (MULTI-TABLE, robust)
+-- StarterGui/TableBillboardHandler (MULTI-TABLE, robust + snapshot init)
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
+local done = ReplicatedFirst:FindFirstChild("LoadingFinished")
+if done and done:IsA("BindableEvent") then
+	done.Event:Wait()
+end
 
 local player = Players.LocalPlayer
 local Events = RS:WaitForChild("Events")
@@ -12,37 +18,28 @@ local TableCountdown = Events:WaitForChild("TableCountdown")
 local TableStatus = Events:WaitForChild("TableStatus")
 
 local TablesFolder = workspace:WaitForChild("Tables")
-
 local tableState = {}
 
 local function hasText(obj)
 	if not obj then return false end
-	local ok = pcall(function()
-		local _ = obj.Text
-	end)
+	local ok = pcall(function() local _ = obj.Text end)
 	return ok
 end
 
 local function findTextObject(root, name)
 	local obj = root:FindFirstChild(name, true)
-	if obj and hasText(obj) then
-		return obj
-	end
+	if obj and hasText(obj) then return obj end
 	return nil
 end
 
 local function setText(obj, text)
 	if not obj then return end
-	pcall(function()
-		obj.Text = text
-	end)
+	pcall(function() obj.Text = text end)
 end
 
 local function setVisible(obj, value)
 	if not obj then return end
-	pcall(function()
-		obj.Visible = value
-	end)
+	pcall(function() obj.Visible = value end)
 end
 
 local function getClosestTableId()
@@ -187,6 +184,25 @@ for id in pairs(tableState) do
 	resetTable(id)
 end
 
+-- Snapshot init for late join
+local getSnapshot = Events:FindFirstChild("GetSeatSnapshot")
+if getSnapshot and getSnapshot:IsA("RemoteFunction") then
+	local ok, snap = pcall(function()
+		return getSnapshot:InvokeServer()
+	end)
+	if ok and type(snap) == "table" then
+		for tableId, count in pairs(snap.tables or {}) do
+			local st = tableState[tableId]
+			local n = tonumber(count) or 0
+			if st then
+				st.occupied.A = (n >= 1)
+				st.occupied.B = (n >= 2)
+				updateCount(tableId)
+			end
+		end
+	end
+end
+
 PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
 	local tid = tableId or getClosestTableId()
 	local st = tid and tableState[tid] or nil
@@ -195,7 +211,6 @@ PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
 	if slot == "A" or slot == "B" then
 		st.occupied[slot] = true
 	else
-		-- fallback if slot was not sent as A/B
 		local count = getCount(st)
 		if count == 0 then st.occupied.A = true else st.occupied.B = true end
 	end
@@ -222,8 +237,9 @@ TableCountdown.OnClientEvent:Connect(function(tableId, t)
 	local st = tableState[tableId]
 	if not st then return end
 
-	if t and t > 0 then
-		showCountdown(tableId, tostring(t))
+	local n = tonumber(t)
+	if n and n > 0 then
+		showCountdown(tableId, tostring(n))
 	else
 		showGoAndHide(tableId)
 	end
@@ -247,4 +263,4 @@ TableStatus.OnClientEvent:Connect(function(tableId, text)
 	setText(st.StatusLbl, msg)
 end)
 
-print("[TableBillboard] Multi-table ready")
+print("[TableBillboardHandler] Ready")
