@@ -51,7 +51,26 @@ local countdownDone = false
 local pendingShowLetterPick = false
 local seatNames = { A = nil, B = nil }
 local jumpLocked = false
+local myTableId = nil
+local myTableSeatNames = { A = nil, B = nil }
+local myTablePlayerCount = 0
 
+local function parseTableId(raw)
+	local s = tostring(raw or "")
+	if s == "" then return nil end
+	if string.sub(s, 1, 4) == "BOT:" then
+		return string.sub(s, 5)
+	end
+	return s
+end
+
+local function recalcMyTableCount()
+	local c = 0
+	if myTableSeatNames.A then c += 1 end
+	if myTableSeatNames.B then c += 1 end
+	myTablePlayerCount = c
+	jumpLocked = (myTablePlayerCount >= 2)
+end
 local LETTER_UI = {
 	CellSize = 72, CellPadding = 6, MaxCells = 8, Radius = 10,
 	StrokeThickness = 2, StrokeColor = Color3.fromRGB(120,165,255),
@@ -261,7 +280,18 @@ E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName)
 	if _G.GoWideShot then _G.GoWideShot(0.45) end
 end)
 
-E.TableCountdown.OnClientEvent:Connect(function(t)
+E.TableCountdown.OnClientEvent:Connect(function(a, b)
+	local tableId, t
+	if b == nil then
+		tableId = myTableId
+		t = a
+	else
+		tableId = tostring(a)
+		t = b
+	end
+
+	if myTableId and tableId and tableId ~= myTableId then return end
+
 	local n = tonumber(t)
 	if n and n > 0 then
 		countdownDone = false
@@ -276,7 +306,10 @@ E.TableCountdown.OnClientEvent:Connect(function(t)
 	end
 end)
 
-E.BotTableCountdown.OnClientEvent:Connect(function(_tableId, t)
+E.BotTableCountdown.OnClientEvent:Connect(function(rawTableId, t)
+	local tableId = parseTableId(rawTableId)
+	if myTableId and tableId ~= myTableId then return end
+
 	local n = tonumber(t)
 	if n and n > 0 then
 		countdownDone = false
@@ -290,27 +323,72 @@ E.BotTableCountdown.OnClientEvent:Connect(function(_tableId, t)
 		openLetterPick()
 	end
 end)
-E.PlayerSat.OnClientEvent:Connect(function(slot, name)
-	playerCount = math.min(playerCount + 1, 2)
-	seatNames[slot] = name
-	if slot == "A" then setText(F.HUDSeat1, "A: "..name) else setText(F.HUDSeat2, "B: "..name) end
-	setText(F.HUDStatus, playerCount.." / 2 seated")
+E.PlayerSat.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	-- If this event is me sitting, bind my table context
 	if name == player.Name then
-		iAmSeated = true; mySlot = slot
-		if _G.GoWideShot then _G.GoWideShot(1.0) end
+		iAmSeated = true
+		mySlot = slot
+		myTableId = tableId
+		myTableSeatNames = { A = nil, B = nil }
+		countdownDone = false
+		pendingShowLetterPick = false
 	end
-	if playerCount >= 2 then jumpLocked = true end
+
+	-- Ignore other tables
+	if myTableId and tableId ~= myTableId then
+		return
+	end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = name
+	end
+
+	recalcMyTableCount()
+
+	setText(F.HUDSeat1, "A: " .. tostring(myTableSeatNames.A or "Empty"))
+	setText(F.HUDSeat2, "B: " .. tostring(myTableSeatNames.B or "Empty"))
+	setText(F.HUDStatus, tostring(myTablePlayerCount) .. " / 2 seated")
+
+	if name == player.Name and _G.GoWideShot then
+		_G.GoWideShot(1.0)
+	end
 end)
 
-E.PlayerStood.OnClientEvent:Connect(function(slot, name)
-	playerCount = math.max(playerCount - 1, 0)
-	seatNames[slot] = nil
-	countdownDone = false; pendingShowLetterPick = false
-	myElimMin = 0; myElimMax = 27; myWrong = {}; jumpLocked = false
-	if slot == "A" then setText(F.HUDSeat1, "A: Empty") else setText(F.HUDSeat2, "B: Empty") end
-	setText(F.HUDStatus, "Walk up and press E to sit")
+E.PlayerStood.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	-- Ignore other tables
+	if myTableId and tableId ~= myTableId then
+		return
+	end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = nil
+	end
+
+	recalcMyTableCount()
+
+	setText(F.HUDSeat1, "A: " .. tostring(myTableSeatNames.A or "Empty"))
+	setText(F.HUDSeat2, "B: " .. tostring(myTableSeatNames.B or "Empty"))
+
 	if name == player.Name then
-		iAmSeated = false; mySlot = nil; hideGuessingOverlay(); hideAll()
+		iAmSeated = false
+		mySlot = nil
+		myTableId = nil
+		myTableSeatNames = { A = nil, B = nil }
+		myTablePlayerCount = 0
+		jumpLocked = false
+		countdownDone = false
+		pendingShowLetterPick = false
+		myElimMin = 0
+		myElimMax = 27
+		myWrong = {}
+
+		hideGuessingOverlay()
+		hideAll()
+		setText(F.HUDStatus, "Walk up and press E to sit")
 		if _G.ReleaseCamera then _G.ReleaseCamera() end
 	end
 end)
@@ -492,7 +570,7 @@ E.CountryGuessResult.OnClientEvent:Connect(function(data)
 end)
 
 E.TimerTick.OnClientEvent:Connect(function(t)
-	if not (iAmSeated and mySlot and playerCount >= 2) then return end
+	if not (iAmSeated and mySlot and myTablePlayerCount >= 2) then return end
 	local col = t <= 10 and Color3.fromRGB(255,60,60) or t <= 30 and Color3.fromRGB(255,180,50) or Color3.fromRGB(255,215,0)
 	local text = t.."s"
 	if F.LGuessF.Visible then F.LGuessTimer.Text = text; F.LGuessTimer.TextColor3 = col end
