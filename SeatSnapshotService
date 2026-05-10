@@ -1,0 +1,70 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local events = RS:WaitForChild("Events")
+
+local getSnapshot = events:FindFirstChild("GetSeatSnapshot")
+if getSnapshot and not getSnapshot:IsA("RemoteFunction") then
+	getSnapshot:Destroy()
+	getSnapshot = nil
+end
+if not getSnapshot then
+	getSnapshot = Instance.new("RemoteFunction")
+	getSnapshot.Name = "GetSeatSnapshot"
+	getSnapshot.Parent = events
+end
+
+local function getNormalCounts()
+	local out = {}
+	local sm = _G.SeatManager
+
+	if sm and sm.getAllTables then
+		local all = sm.getAllTables() or {}
+		for tableId, st in pairs(all) do
+			local count = 0
+			if st.seats then
+				if st.seats.A and st.seats.A.player then count += 1 end
+				if st.seats.B and st.seats.B.player then count += 1 end
+			end
+			out[tableId] = count
+		end
+	end
+
+	return out
+end
+
+local function getBotCounts()
+	local out = {}
+	local bsm = _G.BotSeatManager
+
+	-- initialize keys from workspace
+	local botFolder = workspace:FindFirstChild("BotTables")
+	if botFolder then
+		for _, m in ipairs(botFolder:GetChildren()) do
+			if m:IsA("Model") then
+				out[m.Name] = 0
+			end
+		end
+	end
+
+	-- compute occupancy from seat records
+	if bsm and bsm.getSeatRecord then
+		for _, plr in ipairs(Players:GetPlayers()) do
+			local rec = bsm.getSeatRecord(plr)
+			if rec and rec.tableId then
+				out[rec.tableId] = 1
+			end
+		end
+	end
+
+	return out
+end
+
+getSnapshot.OnServerInvoke = function()
+	return {
+		tables = getNormalCounts(),
+		botTables = getBotCounts(),
+	}
+end
+
+print("[SeatSnapshotService] Ready")
