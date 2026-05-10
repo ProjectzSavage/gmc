@@ -1,5 +1,11 @@
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
+local done = ReplicatedFirst:FindFirstChild("LoadingFinished")
+if done and done:IsA("BindableEvent") then
+	done.Event:Wait()
+end
 
 local events = RS:WaitForChild("Events")
 local BotTableSat = events:WaitForChild("BotTableSat")
@@ -77,6 +83,24 @@ end
 
 for id in pairs(state) do refreshDefault(id) end
 
+-- Snapshot init for late join
+local getSnapshot = events:FindFirstChild("GetSeatSnapshot")
+if getSnapshot and getSnapshot:IsA("RemoteFunction") then
+	local ok, snap = pcall(function()
+		return getSnapshot:InvokeServer()
+	end)
+	if ok and type(snap) == "table" then
+		for tableId, count in pairs(snap.botTables or {}) do
+			local st = state[tableId]
+			local n = tonumber(count) or 0
+			if st then
+				st.occupied = (n > 0)
+				refreshDefault(tableId)
+			end
+		end
+	end
+end
+
 BotTableSat.OnClientEvent:Connect(function(tableId, _playerName)
 	local st = state[tableId]
 	if not st then return end
@@ -95,7 +119,8 @@ BotTableCountdown.OnClientEvent:Connect(function(tableId, t)
 	local st = state[tableId]
 	if not st then return end
 
-	if t and t > 0 then
+	local n = tonumber(t)
+	if n and n > 0 then
 		if st.bb then st.bb.Enabled = true end
 		setVisible(st.countLbl, false)
 		setVisible(st.winLbl, false)
@@ -104,7 +129,7 @@ BotTableCountdown.OnClientEvent:Connect(function(tableId, t)
 			setVisible(st.statusLbl, false)
 		end
 		if st.countdownLbl then
-			setText(st.countdownLbl, tostring(t))
+			setText(st.countdownLbl, tostring(n))
 			pcall(function() st.countdownLbl.TextTransparency = 0 end)
 			TweenService:Create(
 				st.countdownLbl,
