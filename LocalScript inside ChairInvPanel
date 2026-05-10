@@ -1,0 +1,85 @@
+-- LocalScript inside ChairInvPanel
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local p = Players.LocalPlayer
+local gui = p:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+
+local openBtn = gui:WaitForChild("OpenChairInvBtn")
+local panel = gui:WaitForChild("ChairInvPanel")
+local closeBtn = panel:WaitForChild("CloseBtn")
+local grid = panel:WaitForChild("Grid")
+local template = grid:WaitForChild("Template")
+
+local Events = RS:WaitForChild("Events")
+local ChairSync = Events:WaitForChild("ChairSync")
+local RequestSync = Events:FindFirstChild("RequestSync") -- Added for instant load
+
+local COLORS = {
+	Common=Color3.new(.8,.8,.8), Uncommon=Color3.new(.4,1,.4),
+	Rare=Color3.new(.4,.6,1), Legendary=Color3.new(1,.8,.2), Secret=Color3.new(1,.2,.6)
+}
+local POOLS = {
+	Uncommon={"Rock","Grass","Ice","Candy"}, 
+	Rare={"Shiny","Snow","Brick","Water","Magma","Mirror"},
+	Legendary={"Lava","Zap","Radioactive","Angel","Demon"}, 
+	Secret={"Pure","Void"}
+}
+
+local function rarity(n)
+	for r,list in pairs(POOLS) do if table.find(list,n) then return r end end
+	return "Common"
+end
+
+local myData = {owned={}, equipped="Default"}
+
+local function render()
+	for _,c in ipairs(grid:GetChildren()) do 
+		if c:IsA("Frame") and c.Name ~= "Template" then c:Destroy() end 
+	end
+	for _,name in ipairs(myData.owned) do
+		if name == "Default" then continue end
+		local clone = template:Clone()
+		clone.Visible = true; clone.Name = name; clone.Parent = grid
+
+		local lbl = clone:FindFirstChild("NameLbl")
+		if lbl then 
+			lbl.Text = name
+			lbl.TextColor3 = COLORS[rarity(name)] or Color3.new(1,1,1) 
+		end
+
+		local btn = clone:FindFirstChild("EquipBtn")
+		if btn and btn:IsA("TextButton") then
+			if name == myData.equipped then
+				btn.Text="EQUIPPED"
+				btn.BackgroundColor3=Color3.fromRGB(80,220,80)
+				btn.Active=false
+			else
+				btn.Text="EQUIP"
+				btn.BackgroundColor3=Color3.fromRGB(50,50,60)
+				btn.Active=true
+				btn.MouseButton1Click:Connect(function()
+					btn.Text = "..."
+					Events.EquipChair:FireServer(name)
+				end)
+			end
+		end
+	end
+end
+
+-- FIX: Get data immediately when joining
+task.spawn(function()
+	if RequestSync then
+		local data = RequestSync:InvokeServer()
+		if data then myData = data; render() end
+	end
+end)
+
+openBtn.MouseButton1Click:Connect(function() 
+	panel.Visible = not panel.Visible
+end)
+closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
+
+ChairSync.OnClientEvent:Connect(function(data)
+	myData = data
+	render()
+end)
