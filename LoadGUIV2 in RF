@@ -15,7 +15,13 @@ UI.Parent = playerGui
 
 local loaded = false
 local cancelled = false
-
+local loadingState = ReplicatedFirst:FindFirstChild("LoadingState")
+if not loadingState then
+	loadingState = Instance.new("BoolValue")
+	loadingState.Name = "LoadingState"
+	loadingState.Parent = ReplicatedFirst
+end
+loadingState.Value = false
 local function createTween(object, properties, duration, easingStyle, easingDirection, delayTime)
 	local tweenInfo = TweenInfo.new(
 		duration,
@@ -95,7 +101,7 @@ local function finishLoading()
 	task.wait(0.2)
 	createTween(UI.Background.GameImage, {Size = UDim2.new(0.248, 0, 0.42, 0), ImageTransparency = 1}, 0.8, "Quad", "InOut", 0):Play()
 	task.wait(0.9)
-
+	loadingState.Value = true
 	if UI then UI:Destroy() end
 
 	local finishEvent = ReplicatedFirst:FindFirstChild("LoadingFinished")
