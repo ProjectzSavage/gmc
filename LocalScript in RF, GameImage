@@ -1,0 +1,15 @@
+local image = script.Parent
+local gradient = image:WaitForChild("UIGradient")
+local TweenService = game:GetService("TweenService")
+
+local ti = TweenInfo.new(1, Enum.EasingStyle.Circular, Enum.EasingDirection.Out)
+local create = TweenService:Create(gradient, ti, { Offset = Vector2.new(1, 0) })
+local startingPos = Vector2.new(-1, 0)
+local addWait = 2.5
+
+while image.Parent do
+	gradient.Offset = startingPos
+	create:Play()
+	create.Completed:Wait()
+	task.wait(addWait)
+end
