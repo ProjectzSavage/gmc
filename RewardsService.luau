@@ -306,7 +306,20 @@ RewardClaim.OnServerEvent:Connect(function(player, categoryId, rowId)
 	})
 	syncPlayer(player)
 end)
-
+_G.RewardsAddRobuxSpent = function(player, amount)
+	if not player then return end
+	amount = tonumber(amount) or 0
+	if amount <= 0 then return end
+	AddRobuxSpent.OnServerEvent:Connect(function(player, amount)
+		if _G.RewardsAddRobuxSpent then
+			_G.RewardsAddRobuxSpent(player, amount)
+		end
+	end)
+	local data = ensureData(player)
+	data.robuxSpent = (data.robuxSpent or 0) + amount
+	saveData(player)
+	RewardSync:FireClient(player, buildPayload(player, data))
+end
 -- Robux spent
 AddRobuxSpent.OnServerEvent:Connect(function(player, amount)
 	if type(amount) ~= "number" or amount <= 0 then return end
