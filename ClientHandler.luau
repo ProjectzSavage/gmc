@@ -259,7 +259,10 @@ local function getClosestTableModel()
 end
 
 UIS.JumpRequest:Connect(function()
-	if iAmSeated and not jumpLocked then E.RequestStand:FireServer() end
+	if not iAmSeated then return end
+	-- if myTablePlayerCount >= 2 then return end  -- keep this guard
+	if jumpLocked then return end
+	E.RequestStand:FireServer()
 end)
 
 Players.PlayerRemoving:Connect(function(p)
