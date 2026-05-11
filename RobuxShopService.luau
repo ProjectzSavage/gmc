@@ -123,7 +123,11 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	if not player then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-
+	local info = MarketplaceService:GetProductInfoAsync(receiptInfo.ProductId, Enum.InfoType.Product)
+	local price = (info and (info.PriceInRobux or info.Price)) or 0
+	if _G.RewardsAddRobuxSpent then
+		_G.RewardsAddRobuxSpent(player, price)
+	end
 	local key = PRODUCT_TO_KEY[receiptInfo.ProductId]
 	if not key then
 		-- Check game powerups
