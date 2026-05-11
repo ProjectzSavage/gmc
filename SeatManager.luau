@@ -97,11 +97,14 @@ local function getSeatRecord(player)
 	return playerToSeat[player.UserId]
 end
 
-local function standPlayer(player)
+local function standPlayer(player, force)
 	local record = getSeatRecord(player)
 	if not record then return false end
 
 	local tableState = tables[record.tableId]
+	if tableState.locked and not force then
+		return false
+	end
 	if not tableState then
 		playerToSeat[player.UserId] = nil
 		return false
@@ -292,9 +295,8 @@ end)
 
 RequestStand.OnServerEvent:Connect(function(player)
 	if not canAct(player) then return end
-	standPlayer(player)
+	standPlayer(player, false)
 end)
-
 Players.PlayerRemoving:Connect(function(player)
 	lastActionAt[player.UserId] = nil
 	standPlayer(player)
@@ -313,7 +315,24 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 end)
+_G.SeatManager.setTableLocked = function(tableId, locked)
+	local st = tables[tableId]
+	if not st then return end
+	st.locked = locked == true
+	if st.sitPrompt then
+		st.sitPrompt.Enabled = not st.locked
+	end
+end
 
+_G.SeatManager.standSlot = function(tableId, slot, force)
+	local st = tables[tableId]
+	if not st then return false end
+	local seatState = st.seats[slot]
+	if seatState and seatState.player then
+		return standPlayer(seatState.player, force == true)
+	end
+	return false
+end
 _G.SeatManager = {
 	getAllTables = function()
 		return tables
