@@ -44,6 +44,9 @@ local playerToTable = {}
 _G.GetSessionByPlayer = function(player)
 	if not player then return nil end
 	local tableId = playerToTable[player.UserId]
+	if _G.SeatManager and _G.SeatManager.setTableLocked then
+		_G.SeatManager.setTableLocked(tableId, true)
+	end
 	if not tableId then return nil end
 	local s = sessions[tableId]
 	if s and s.active then return s end
@@ -156,6 +159,9 @@ local function clearSession(tableId)
 	if session.playerB then playerToTable[session.playerB.UserId] = nil end
 	setTableStatus(tableId, "")
 	setTableCountdown(tableId, 0)
+	if _G.SeatManager and _G.SeatManager.setTableLocked then
+		_G.SeatManager.setTableLocked(tableId, false)
+	end
 end
 
 local function endSessionWithWinner(tableId, winner, reason)
