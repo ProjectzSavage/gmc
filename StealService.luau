@@ -98,7 +98,7 @@ StealRequest.OnServerEvent:Connect(function(player, targetUserId)
 	local tHrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
 	if not pHrp or not tHrp then return end
 
-	if (pHrp.Position - tHrp.Position).Magnitude > 12 then
+	if (pHrp.Position - tHrp.Position).Magnitude > 999999999999999 then
 		NotifyPlayer:FireClient(player, {
 			title = TEXT.TitleFail,
 			message = TEXT.NoTarget,
