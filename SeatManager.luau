@@ -64,7 +64,7 @@ local function restoreMovement(humanoid, rootPart)
 		humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
 		humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
 		humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-		humanoid.WalkSpeed = 16
+		humanoid.WalkSpeed = 21
 		humanoid.JumpPower = 50
 		humanoid.JumpHeight = 7.2
 		humanoid.Sit = false
@@ -83,12 +83,6 @@ local function lockSeated(humanoid, rootPart, seatPart)
 	humanoid.AutoRotate = false
 	humanoid.PlatformStand = false
 	humanoid.WalkSpeed = 0
-	humanoid.JumpPower = 0
-	humanoid.JumpHeight = 0
-	humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-	humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-	humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-	humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
 	humanoid.Sit = true
 	humanoid:ChangeState(Enum.HumanoidStateType.Seated)
 end
@@ -102,11 +96,11 @@ local function standPlayer(player, force)
 	if not record then return false end
 
 	local tableState = tables[record.tableId]
-	if tableState.locked and not force then
-		return false
-	end
 	if not tableState then
 		playerToSeat[player.UserId] = nil
+		return false
+	end
+	if tableState.locked and not force then
 		return false
 	end
 
@@ -178,7 +172,8 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	end
 	seatState.deadConn = humanoid.Died:Connect(function()
 		if seatState.player == player then
-			standPlayer(player)
+			-- Force stand even when table is locked (mid-match).
+			standPlayer(player, true)
 		end
 	end)
 
@@ -242,6 +237,7 @@ local function addTable(tableModel)
 		tableTop = tableTop,
 		token = 0,
 		promptsEnabled = true,
+		locked = false,
 		sitPrompt = nil,
 		seats = {
 			A = { part = seatA, player = nil, deadConn = nil },
@@ -315,60 +311,57 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 end)
-_G.SeatManager.setTableLocked = function(tableId, locked)
-	local st = tables[tableId]
-	if not st then return end
-	st.locked = locked == true
-	if st.sitPrompt then
-		st.sitPrompt.Enabled = not st.locked
-	end
+
+local function applyPromptState(tableState)
+	if not tableState or not tableState.sitPrompt then return end
+	tableState.sitPrompt.Enabled = (tableState.promptsEnabled == true) and (tableState.locked ~= true)
 end
 
-_G.SeatManager.standSlot = function(tableId, slot, force)
-	local st = tables[tableId]
-	if not st then return false end
-	local seatState = st.seats[slot]
-	if seatState and seatState.player then
-		return standPlayer(seatState.player, force == true)
-	end
-	return false
-end
 _G.SeatManager = {
 	getAllTables = function()
 		return tables
 	end,
+
 	getTableSeats = function(tableId)
 		local tableState = tables[tableId]
 		return tableState and tableState.seats or nil
 	end,
+
 	getSeatRecord = function(player)
 		return getSeatRecord(player)
 	end,
+
 	standPlayer = function(player)
 		return standPlayer(player)
 	end,
-	standSlot = function(tableId, slot)
+
+	standSlot = function(tableId, slot, force)
 		local tableState = tables[tableId]
 		if not tableState then return false end
 		local seatState = tableState.seats[slot]
 		if not seatState or not seatState.player then return false end
-		return standPlayer(seatState.player)
+		return standPlayer(seatState.player, force == true)
 	end,
+
+	setTableLocked = function(tableId, locked)
+		local tableState = tables[tableId]
+		if not tableState then return end
+		tableState.locked = (locked == true)
+		applyPromptState(tableState)
+	end,
+
 	setTablePromptEnabled = function(tableId, enabled)
 		local tableState = tables[tableId]
 		if not tableState then return end
-		tableState.promptsEnabled = enabled == true
-		if tableState.sitPrompt then
-			tableState.sitPrompt.Enabled = tableState.promptsEnabled
-		end
+		tableState.promptsEnabled = (enabled == true)
+		applyPromptState(tableState)
 	end,
+
 	setAllPromptsEnabled = function(enabled)
-		local value = enabled == true
+		local value = (enabled == true)
 		for _, tableState in pairs(tables) do
 			tableState.promptsEnabled = value
-			if tableState.sitPrompt then
-				tableState.sitPrompt.Enabled = value
-			end
+			applyPromptState(tableState)
 		end
 	end,
 }
