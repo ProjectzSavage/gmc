@@ -218,8 +218,9 @@ if getSnapshot and getSnapshot:IsA("RemoteFunction") then
 end
 
 PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
-	local tid = tableId or getClosestTableId()
-	local st = tid and tableState[tid] or nil
+	if not tableId then return end
+	local tid = tableId
+	local st = tableState[tid]
 	if not st then return end
 
 	if slot == "A" or slot == "B" then
@@ -233,8 +234,9 @@ PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
 end)
 
 PlayerStood.OnClientEvent:Connect(function(slot, _name, tableId)
-	local tid = tableId or getClosestTableId()
-	local st = tid and tableState[tid] or nil
+	if not tableId then return end
+	local tid = tableId
+	local st = tableState[tid]
 	if not st then return end
 
 	if slot == "A" or slot == "B" then
