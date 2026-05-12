@@ -44,14 +44,10 @@ local playerToTable = {}
 _G.GetSessionByPlayer = function(player)
 	if not player then return nil end
 	local tableId = playerToTable[player.UserId]
-	if _G.SeatManager and _G.SeatManager.setTableLocked then
-		_G.SeatManager.setTableLocked(tableId, true)
-	end
 	if not tableId then return nil end
 	local s = sessions[tableId]
 	if s and s.active then return s end
 	return nil
-	
 end
 
 local function countryListForLetter(letter)
@@ -140,7 +136,7 @@ end
 local function fireBoth(session, remote, ...)
 	if session.playerA then remote:FireClient(session.playerA, ...) end
 	if session.playerB then remote:FireClient(session.playerB, ...) end
-	
+
 end
 
 local function clearSession(tableId)
@@ -165,7 +161,7 @@ local function clearSession(tableId)
 end
 
 local function endSessionWithWinner(tableId, winner, reason)
-	
+
 	local session = sessions[tableId]
 	if not session or not session.active or session.ending then return end
 
@@ -356,7 +352,9 @@ local function createSession(tableId, playerA, playerB)
 	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
 		_G.SeatManager.setTablePromptEnabled(tableId, false)
 	end
-
+	if _G.SeatManager and _G.SeatManager.setTableLocked then
+		_G.SeatManager.setTableLocked(tableId, true)
+	end
 	setTableStatus(tableId, "Both players are ready")
 	if _G.DailyQuestMarkPlayedWithFriend then
 		_G.DailyQuestMarkPlayedWithFriend(playerA, playerB)
