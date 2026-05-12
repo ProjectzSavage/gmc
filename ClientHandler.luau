@@ -50,7 +50,7 @@ local mySlot = nil
 local countdownDone = false
 local pendingShowLetterPick = false
 local seatNames = { A = nil, B = nil }
-local jumpLocked = false
+local roundJumpLocked = false -- lock starts when countdown starts, stays locked during match
 local myTableId = nil
 local myTableSeatNames = { A = nil, B = nil }
 local myTablePlayerCount = 0
@@ -69,7 +69,11 @@ local function recalcMyTableCount()
 	if myTableSeatNames.A then c += 1 end
 	if myTableSeatNames.B then c += 1 end
 	myTablePlayerCount = c
-	jumpLocked = (myTablePlayerCount >= 2)
+
+	-- If table drops below 2 players, never keep jump locked.
+	if myTablePlayerCount < 2 then
+		roundJumpLocked = false
+	end
 end
 local LETTER_UI = {
 	CellSize = 72, CellPadding = 6, MaxCells = 8, Radius = 10,
@@ -260,14 +264,13 @@ end
 
 UIS.JumpRequest:Connect(function()
 	if not iAmSeated then return end
-	-- if myTablePlayerCount >= 2 then return end  -- keep this guard
-	if jumpLocked then return end
+	if roundJumpLocked then return end
 	E.RequestStand:FireServer()
 end)
 
 Players.PlayerRemoving:Connect(function(p)
 	if seatNames.A == p.Name or seatNames.B == p.Name then
-		jumpLocked = false
+		roundJumpLocked = false
 		if iAmSeated then E.RequestStand:FireServer() end
 	end
 end)
@@ -297,12 +300,16 @@ E.TableCountdown.OnClientEvent:Connect(function(a, b)
 
 	local n = tonumber(t)
 	if n and n > 0 then
+		-- Countdown phase: allow jump/stand
 		countdownDone = false
+		roundJumpLocked = false
 		hideAll()
 		return
 	end
 
+	-- Countdown finished -> game starts: lock jump
 	countdownDone = true
+	roundJumpLocked = true
 	if pendingShowLetterPick then
 		pendingShowLetterPick = false
 		openLetterPick()
@@ -315,12 +322,16 @@ E.BotTableCountdown.OnClientEvent:Connect(function(rawTableId, t)
 
 	local n = tonumber(t)
 	if n and n > 0 then
+		-- Countdown phase: allow jump/stand
 		countdownDone = false
+		roundJumpLocked = false
 		hideAll()
 		return
 	end
 
+	-- Countdown finished -> game starts: lock jump
 	countdownDone = true
+	roundJumpLocked = true
 	if pendingShowLetterPick then
 		pendingShowLetterPick = false
 		openLetterPick()
@@ -332,6 +343,7 @@ E.PlayerSat.OnClientEvent:Connect(function(slot, name, rawTableId)
 	-- If this event is me sitting, bind my table context
 	if name == player.Name then
 		iAmSeated = true
+		roundJumpLocked = false
 		mySlot = slot
 		myTableId = tableId
 		myTableSeatNames = { A = nil, B = nil }
@@ -382,7 +394,7 @@ E.PlayerStood.OnClientEvent:Connect(function(slot, name, rawTableId)
 		myTableId = nil
 		myTableSeatNames = { A = nil, B = nil }
 		myTablePlayerCount = 0
-		jumpLocked = false
+		roundJumpLocked = false
 		countdownDone = false
 		pendingShowLetterPick = false
 		myElimMin = 0
@@ -584,7 +596,7 @@ E.RoundOver.OnClientEvent:Connect(function() end)
 
 E.GameOver.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	hideAll(); jumpLocked = false
+	hideAll(); roundJumpLocked = false
 	local winner = (data and data.winner) or "Unknown"
 	if F.GameOverF and F.GameOverLbl then F.GameOverF.Visible = true; F.GameOverLbl.Text = "Winner: "..winner
 	else F.WaitF.Visible = true; F.WaitLbl.Text = "Winner: "..winner end
@@ -594,7 +606,7 @@ end)
 E.ResetAll.OnClientEvent:Connect(function()
 	myElimMin=0; myElimMax=27; myWrong={}; playerCount=0
 	seatNames.A=nil; seatNames.B=nil; iAmSeated=false; mySlot=nil
-	countdownDone=false; pendingShowLetterPick=false; jumpLocked=false
+	countdownDone=false; pendingShowLetterPick=false; roundJumpLocked=false
 	hideGuessingOverlay(); hideAll()
 	setText(F.HUDSeat1, "A: Empty"); setText(F.HUDSeat2, "B: Empty")
 	setText(F.HUDStatus, "Walk up and press E to sit")
