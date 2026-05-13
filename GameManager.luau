@@ -194,8 +194,7 @@ local function endSessionWithWinner(tableId, winner, reason)
 	-- Winner stands
 	task.delay(0.35, function()
 		if _G.SeatManager and _G.SeatManager.standPlayer and winner then
-			_G.SeatManager.standPlayer(winner)
-		end
+			_G.SeatManager.standPlayer(winner, true)		end
 	end)
 
 	-- Loser dies
@@ -365,10 +364,16 @@ local function createSession(tableId, playerA, playerB)
 			setTableCountdown(tableId, t)
 			task.wait(1)
 		end
+
+		-- Countdown ended: lock now (game start)
+		if _G.SeatManager and _G.SeatManager.setTableLocked then
+			_G.SeatManager.setTableLocked(tableId, true)
+		end
+
 		setTableCountdown(tableId, 0)
 		beginLetterPick(tableId)
 	end)
-end
+	end
 
 _G.OnBothSeated = function(tableId, playerA, playerB)
 	createSession(tableId, playerA, playerB)
@@ -387,8 +392,8 @@ local function cancelSessionNoWinner(tableId, reason)
 	-- Stand both players safely
 	task.delay(0.2, function()
 		if _G.SeatManager and _G.SeatManager.standPlayer then
-			if session.playerA then _G.SeatManager.standPlayer(session.playerA) end
-			if session.playerB then _G.SeatManager.standPlayer(session.playerB) end
+			if session.playerA then _G.SeatManager.standPlayer(session.playerA, true) end
+			if session.playerB then _G.SeatManager.standPlayer(session.playerB, true) end
 		end
 	end)
 
