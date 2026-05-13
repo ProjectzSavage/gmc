@@ -10,7 +10,7 @@ local NotifyPlayer = Events:WaitForChild("NotifyPlayer")
 
 local root = gameGui:WaitForChild("NotifyF")
 root.Visible = true; root.BackgroundTransparency = 1
-root.Size = UDim2.new(0, 380, 1, 0); root.Position = UDim2.new(0.5, -190, 0, 0); root.AnchorPoint = Vector2.new(0, 0)
+root.Size = UDim2.new(0, 380, 1, 0); root.Position = UDim2.new(0.5, -190, 0, -100); root.AnchorPoint = Vector2.new(0, 0)
 
 local oldTitle = root:FindFirstChild("TitleLbl")
 local oldMsg = root:FindFirstChild("MsgLbl")
@@ -60,6 +60,11 @@ NotifyPlayer.OnClientEvent:Connect(function(payload)
 	ml.TextColor3=Color3.fromRGB(200,210,230); ml.TextTransparency=1; ml.TextXAlignment=Enum.TextXAlignment.Left; ml.TextTruncate=Enum.TextTruncate.AtEnd; ml.ZIndex=51; ml.Parent=card
 
 	root.Visible = true
+	root.ZIndex = 300
+	card.ZIndex = 301
+	bar.ZIndex = 302
+	tl.ZIndex = 302
+	ml.ZIndex = 302
 	TweenService:Create(card, TweenInfo.new(0.2), {BackgroundTransparency=0.08}):Play()
 	TweenService:Create(stroke, TweenInfo.new(0.2), {Transparency=0}):Play()
 	TweenService:Create(bar, TweenInfo.new(0.15), {BackgroundTransparency=0}):Play()
