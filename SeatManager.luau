@@ -101,7 +101,18 @@ local function standPlayer(player, force)
 		return false
 	end
 	if tableState.locked and not force then
-		return false
+		local session = nil
+		if _G.GetSessionByPlayer then
+			session = _G.GetSessionByPlayer(player)
+		end
+
+		-- Only block leaving once actual gameplay has started.
+		if session and session.started then
+			return false
+		end
+
+		-- If lock is stale or pre-start, unlock this table and allow stand.
+		tableState.locked = false
 	end
 
 	local seatState = tableState.seats[record.slot]
@@ -331,8 +342,8 @@ _G.SeatManager = {
 		return getSeatRecord(player)
 	end,
 
-	standPlayer = function(player)
-		return standPlayer(player)
+	standPlayer = function(player, force)
+		return standPlayer(player, force == true)
 	end,
 
 	standSlot = function(tableId, slot, force)
