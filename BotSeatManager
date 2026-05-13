@@ -59,12 +59,6 @@ local function lockSeated(h, hrp, seatPart)
 	h.AutoRotate = false
 	h.PlatformStand = false
 	h.WalkSpeed = 0
-	h.JumpPower = 0
-	h.JumpHeight = 0
-	h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-	h:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-	h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-	h:SetStateEnabled(Enum.HumanoidStateType.GettingUp, false)
 	h.Sit = true
 	h:ChangeState(Enum.HumanoidStateType.Seated)
 end
@@ -76,7 +70,7 @@ local function setPromptEnabled(st, enabled)
 	end
 end
 
-local function standPlayer(player)
+local function standPlayer(player, force)
 	local tableId = playerToTable[player.UserId]
 	if not tableId then return false end
 
@@ -87,6 +81,9 @@ local function standPlayer(player)
 		return false
 	end
 
+	if lockedPlayers[player.UserId] and not force then
+		return false
+	end
 	local char = player.Character
 	local h = char and char:FindFirstChildOfClass("Humanoid")
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -135,7 +132,7 @@ local function sitPlayer(player, tableId)
 
 	if st.deadConn then st.deadConn:Disconnect() end
 	st.deadConn = h.Died:Connect(function()
-		if st.player == player then standPlayer(player) end
+		if st.player == player then standPlayer(player, true) end
 	end)
 
 	-- Fire focus first, then shared event, so camera context is ready before UI tween.
@@ -200,12 +197,11 @@ for _, child in ipairs(botTablesFolder:GetChildren()) do
 end
 
 RequestStand.OnServerEvent:Connect(function(player)
-	if lockedPlayers[player.UserId] then return end
-	standPlayer(player)
+	standPlayer(player, false)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	standPlayer(player)
+	standPlayer(player, true)
 end)
 
 RunService.Heartbeat:Connect(function()
@@ -234,7 +230,9 @@ _G.BotSeatManager = {
 			lockedPlayers[player.UserId] = locked == true
 		end
 	end,
-	standPlayer = standPlayer,
+	standPlayer = function(player, force)
+		return standPlayer(player, force == true)
+	end,
 }
 
 print("[BotSeatManager] Ready")
