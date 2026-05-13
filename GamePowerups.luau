@@ -23,9 +23,9 @@ local TestGamePowerup = ensureEvent("TestGamePowerup")
 local UseFreePowerup = ensureEvent("UseFreePowerup")
 
 local POWERUP_PRODUCTS = {
-	hint = 0,
-	reveal_country = 0,
-	reveal_letter = 0,
+	hint = 3581498716,
+	reveal_country = 3581498875,
+	reveal_letter = 3581498810,
 }
 
 local PRODUCT_TO_TYPE = {}
@@ -115,9 +115,15 @@ end
 ----------------------------------------------------------------
 _G.ApplyGamePowerup = function(player, powerupType)
 	local session = nil
+
 	if _G.GetSessionByPlayer then
 		session = _G.GetSessionByPlayer(player)
 	end
+
+	if not session and _G.GetBotSessionByPlayer then
+		session = _G.GetBotSessionByPlayer(player)
+	end
+
 	if not session and _G.CurrentGameSession and _G.CurrentGameSession.active then
 		session = _G.CurrentGameSession
 	end
