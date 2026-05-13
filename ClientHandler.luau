@@ -2,7 +2,7 @@
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
-
+local CAS = game:GetService("ContextActionService")
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
@@ -262,18 +262,43 @@ local function getClosestTableModel()
 	return best
 end
 
-UIS.JumpRequest:Connect(function()
+local CAS = game:GetService("ContextActionService")
+
+local lastStandRequestAt = 0
+local function tryStandFromJump()
 	if not iAmSeated then return end
 	if roundJumpLocked then return end
+
+	-- tiny client debounce so we do not spam server
+	local now = os.clock()
+	if now - lastStandRequestAt < 0.15 then return end
+	lastStandRequestAt = now
+
 	E.RequestStand:FireServer()
+end
+
+-- Works on many clients/devices
+UIS.JumpRequest:Connect(function()
+	tryStandFromJump()
 end)
 
-Players.PlayerRemoving:Connect(function(p)
-	if seatNames.A == p.Name or seatNames.B == p.Name then
-		roundJumpLocked = false
-		if iAmSeated then E.RequestStand:FireServer() end
+-- PC fallback: Space / gamepad A even if JumpRequest does not fire while seated
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if not iAmSeated then return end
+	if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
+		tryStandFromJump()
+	elseif input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == Enum.KeyCode.ButtonA then
+		tryStandFromJump()
 	end
 end)
+
+-- Mobile + Roblox jump action path
+CAS:BindAction("SeatJumpLeave", function(_, inputState)
+	if inputState == Enum.UserInputState.Begin then
+		tryStandFromJump()
+	end
+	return Enum.ContextActionResult.Pass
+end, false, Enum.PlayerActions.CharacterJump)
 
 -- ALL event handlers now guard: `if not iAmSeated then return end`
 
