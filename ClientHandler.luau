@@ -617,31 +617,60 @@ E.TimerTick.OnClientEvent:Connect(function(t)
 	if F.CGuessF.Visible then F.CGuessTimer.Text = text; F.CGuessTimer.TextColor3 = col end
 end)
 
-E.RoundOver.OnClientEvent:Connect(function() end)
+E.RoundOver.OnClientEvent:Connect(function()
+end)
 
 E.GameOver.OnClientEvent:Connect(function(data)
-	if not iAmSeated then return end
-	hideAll(); roundJumpLocked = false
+	hideAll()
+	roundJumpLocked = false
+
 	local winner = (data and data.winner) or "Unknown"
-	if F.GameOverF and F.GameOverLbl then F.GameOverF.Visible = true; F.GameOverLbl.Text = "Winner: "..winner
-	else F.WaitF.Visible = true; F.WaitLbl.Text = "Winner: "..winner end
-	if _G.ReleaseCamera then _G.ReleaseCamera() end
+	if iAmSeated then
+		if F.GameOverF and F.GameOverLbl then
+			F.GameOverF.Visible = true
+			F.GameOverLbl.Text = "Winner: " .. winner
+		else
+			F.WaitF.Visible = true
+			F.WaitLbl.Text = "Winner: " .. winner
+		end
+	end
+
+	if _G.ReleaseCamera then
+		_G.ReleaseCamera()
+		task.delay(0.2, function()
+			if _G.ReleaseCamera then _G.ReleaseCamera() end
+		end)
+	end
 end)
 
 E.ResetAll.OnClientEvent:Connect(function()
-	myElimMin=0; myElimMax=27; myWrong={}; playerCount=0
-	seatNames.A=nil; seatNames.B=nil; iAmSeated=false; mySlot=nil
-	countdownDone=false; pendingShowLetterPick=false; roundJumpLocked=false
-	hideGuessingOverlay(); hideAll()
-	setText(F.HUDSeat1, "A: Empty"); setText(F.HUDSeat2, "B: Empty")
+	myElimMin = 0
+	myElimMax = 27
+	myWrong = {}
+	playerCount = 0
+	seatNames.A = nil
+	seatNames.B = nil
+	iAmSeated = false
+	mySlot = nil
+	countdownDone = false
+	pendingShowLetterPick = false
+	roundJumpLocked = false
+
+	hideGuessingOverlay()
+	hideAll()
+	setText(F.HUDSeat1, "A: Empty")
+	setText(F.HUDSeat2, "B: Empty")
 	setText(F.HUDStatus, "Walk up and press E to sit")
+
 	if _G.ReleaseCamera then _G.ReleaseCamera() end
 end)
 
 player.CharacterAdded:Connect(function()
-	task.wait(0.15); hideGuessingOverlay(); hideAll()
+	task.wait(0.15)
+	hideGuessingOverlay()
+	hideAll()
 	if F.GameOverF then F.GameOverF.Visible = false end
 	if _G.ReleaseCamera then _G.ReleaseCamera(0.2) end
 end)
 
-print("[ClientHandler] Ready - "..player.Name)
+print("[ClientHandler] Ready - " .. player.Name)
