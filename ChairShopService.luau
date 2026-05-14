@@ -2,7 +2,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 local DS = game:GetService("DataStoreService"):GetDataStore("GMC_Chairs_V1")
-
+local GROUP_ID = 35973544 -- TODO: replace with your Roblox group id
 -- 1. SETUP EVENTS
 local Events = RS:WaitForChild("Events")
 local function ensureEvent(name, class)
@@ -15,7 +15,10 @@ local EquipChair = ensureEvent("EquipChair", "RemoteEvent")
 local ChairSync = ensureEvent("ChairSync", "RemoteEvent")
 local NotifyPlayer = ensureEvent("NotifyPlayer", "RemoteEvent")
 local RequestSync = ensureEvent("RequestSync", "RemoteFunction")
+local MarketplaceService = game:GetService("MarketplaceService")
 
+local RAINBOW_BLOODMOON_PASS_ID = 1840862526 -- TODO: replace with your gamepass id
+local PASS_CHAIRS = { "Rainbow", "Bloodmoon" }
 -- 2. CONFIG & FOLDERS
 local REFRESH_INTERVAL = 30
 local SHOP_HEIGHT_OFFSET = 0.15
@@ -46,13 +49,118 @@ local Pads = {
 local CountdownLbl = Podium:WaitForChild("CountdownPart"):WaitForChild("CountdownLabel"):WaitForChild("Text"):WaitForChild("ChairLbl")
 
 local playerData = {}
+local function saveChairData(userId)
+	local data = playerData[userId]
+	if not data then return end
+	pcall(function()
+		DS:SetAsync("c_" .. userId, data)
+	end)
+end
+local function grantPassChairs(player)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	local ok, owns = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, RAINBOW_BLOODMOON_PASS_ID)
+	end)
+	if not ok or not owns then return end
+
+	local changed = false
+	for _, chairName in ipairs(PASS_CHAIRS) do
+		if not table.find(data.owned, chairName) then
+			table.insert(data.owned, chairName)
+			changed = true
+		end
+	end
+
+	if changed then
+		pcall(function()
+			DS:SetAsync("c_" .. player.UserId, data)
+		end)
+		ChairSync:FireClient(player, data)
+		NotifyPlayer:FireClient(player, {
+			title = "Gamepass Chairs",
+			message = "Rainbow + Bloodmoon unlocked",
+			kind = "success",
+			duration = 3,
+		})
+	end
+end
+local function hasChair(data, chairName)
+	if not data or type(data.owned) ~= "table" then return false end
+	return table.find(data.owned, chairName) ~= nil
+end
+
+local function grantChair(player, chairName, notifyText)
+	local data = playerData[player.UserId]
+	if not data then return false end
+
+	if not hasChair(data, chairName) then
+		table.insert(data.owned, chairName)
+		saveChairData(player.UserId)
+		ChairSync:FireClient(player, data)
+		if notifyText and NotifyPlayer then
+			NotifyPlayer:FireClient(player, {
+				title = "Chair Unlocked",
+				message = notifyText,
+				kind = "success",
+				duration = 3,
+			})
+		end
+		return true
+	end
+
+	return false
+end
 
 -- 3. GLOBAL HELPER
 _G.GetEquippedChair = function(p)
 	if not p or not playerData[p.UserId] then return "Default" end
 	return playerData[p.UserId].equipped or "Default"
 end
+_G.PlayerOwnsChair = function(player, chairName)
+	local data = player and playerData[player.UserId]
+	return hasChair(data, chairName)
+end
 
+_G.ChairGrantToPlayer = function(player, chairName, notifyText)
+	if not player or not chairName then return false end
+	return grantChair(player, chairName, notifyText)
+end
+
+_G.ChairGrantMystery = function(player, count, pool)
+	local data = player and playerData[player.UserId]
+	if not data then return {} end
+
+	count = math.max(1, tonumber(count) or 1)
+	local granted = {}
+
+	for _ = 1, count do
+		local candidates = {}
+		for _, chairName in ipairs(pool) do
+			if not hasChair(data, chairName) then
+				table.insert(candidates, chairName)
+			end
+		end
+		if #candidates == 0 then break end
+
+		local pick = candidates[math.random(1, #candidates)]
+		if grantChair(player, pick, nil) then
+			table.insert(granted, pick)
+		end
+	end
+
+	if #granted > 0 and NotifyPlayer then
+		NotifyPlayer:FireClient(player, {
+			title = "Mystery Reward",
+			message = "You got: " .. table.concat(granted, ", "),
+			kind = "success",
+			duration = 4,
+		})
+	end
+
+	return granted
+end
 -- 4. PLACEMENT LOGIC
 local function placeOnPad(pad, name)
 	for _, c in ipairs(pad:GetChildren()) do 
@@ -118,6 +226,22 @@ end
 Players.PlayerAdded:Connect(function(p)
 	local ok, d = pcall(function() return DS:GetAsync("c_"..p.UserId) end)
 	playerData[p.UserId] = (ok and d) or { owned = {"Default"}, equipped = "Default" }
+	local data = playerData[p.UserId]
+	if data then
+		data.owned = data.owned or {"Default"}
+		data.equipped = data.equipped or "Default"
+		grantPassChairs(p)
+		local ok, inGroup = pcall(function()
+			return GROUP_ID > 0 and p:IsInGroupAsync(GROUP_ID)
+		end)
+
+		if ok and inGroup then
+			if not table.find(data.owned, "Deer") then
+				table.insert(data.owned, "Deer")
+				pcall(function() DS:SetAsync("c_" .. p.UserId, data) end)
+			end
+		end
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(p)
@@ -135,7 +259,8 @@ EquipChair.OnServerEvent:Connect(function(p, name)
 	end
 end)
 
-RequestSync.OnServerInvoke = function(p) return playerData[p.UserId] end
+RequestSync.OnServerInvoke = function(p) grantPassChairs(p)
+	return playerData[p.UserId] end
 
 task.spawn(function()
 	while true do
