@@ -1,0 +1,41 @@
+local NumberFormat = {}
+
+local function addCommas(n)
+	local s = tostring(math.floor(tonumber(n) or 0))
+	local sign = ""
+	if string.sub(s, 1, 1) == "-" then
+		sign = "-"
+		s = string.sub(s, 2)
+	end
+	while true do
+		local replaced, count = string.gsub(s, "^(%d+)(%d%d%d)", "%1,%2")
+		s = replaced
+		if count == 0 then break end
+	end
+	return sign .. s
+end
+
+function NumberFormat.compact(n)
+	n = math.floor(tonumber(n) or 0)
+	if n < 10000 then
+		return addCommas(n)
+	end
+	if n < 1000000 then
+		local k = n / 1000
+		local s = string.format("%.1f", k)
+		s = string.gsub(s, "%.?0+$", "")
+		s = string.gsub(s, "%.", ",")
+		return s .. "k"
+	end
+	local m = n / 1000000
+	local s = string.format("%.1f", m)
+	s = string.gsub(s, "%.?0+$", "")
+	s = string.gsub(s, "%.", ",")
+	return s .. "M"
+end
+
+function NumberFormat.commas(n)
+	return addCommas(n)
+end
+
+return NumberFormat
