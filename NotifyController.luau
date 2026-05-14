@@ -10,7 +10,7 @@ local NotifyPlayer = Events:WaitForChild("NotifyPlayer")
 
 local root = gameGui:WaitForChild("NotifyF")
 root.Visible = true; root.BackgroundTransparency = 1
-root.Size = UDim2.new(0, 380, 1, 0); root.Position = UDim2.new(0.5, -190, 0, -100); root.AnchorPoint = Vector2.new(0, 0)
+root.Size = UDim2.new(0, 380, 1, 0); root.Position = UDim2.new(0.5, -190, 0, -10); root.AnchorPoint = Vector2.new(0, 0)
 
 local oldTitle = root:FindFirstChild("TitleLbl")
 local oldMsg = root:FindFirstChild("MsgLbl")
