@@ -26,7 +26,7 @@ local SHOP = {
 	cash_300      = { kind = "devproduct", id = 3579858207, grant = { cash = 300 } },
 	cash_1000     = { kind = "devproduct", id = 3579859740, grant = { cash = 1000 } },
 	cash_2500     = { kind = "devproduct", id = 3579859866, grant = { cash = 2500 } },
-	cash_5000     = { kind = "devproduct", id = 3579860087, grant = { cash = 500000 } },
+	cash_5000     = { kind = "devproduct", id = 3579860087, grant = { cash = 5000 } },
 
 	wins_10       = { kind = "devproduct", id = 3579860492, grant = { wins = 10 } },
 	wins_25       = { kind = "devproduct", id = 3579862556, grant = { wins = 25 } },
