@@ -1,0 +1,270 @@
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local NumberFormat = require(ReplicatedStorage:WaitForChild("NumberFormat"))
+
+local CASH_ORDERED = DataStoreService:GetOrderedDataStore("GuessMyCountry_LB_Cash_V1")
+local WINS_ORDERED = DataStoreService:GetOrderedDataStore("GuessMyCountry_LB_Wins_V1")
+local STREAK_ORDERED = DataStoreService:GetOrderedDataStore("GuessMyCountry_LB_Streak_V1")
+
+local REFRESH_SECONDS = 30
+local TOP_N = 100
+
+local BOARD_CONFIG = {
+	{ key = "cash", guiName = "CashLeaderboard", store = CASH_ORDERED, prefix = "$" },
+	{ key = "wins", guiName = "WinsLeaderboard", store = WINS_ORDERED, prefix = "🏆" },
+	{ key = "streak", guiName = "StreaksLeaderboard", store = STREAK_ORDERED, prefix = "🔥" },
+}
+
+local rankMaps = { cash = {}, wins = {}, streak = {} }
+local nameCache = {}
+local thumbCache = {}
+local nextRefreshAt = os.time() + REFRESH_SECONDS
+
+local function getName(userId)
+	if nameCache[userId] then return nameCache[userId] end
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	if ok and name then
+		nameCache[userId] = name
+		return name
+	end
+	return "Unknown"
+end
+
+local function getThumb(userId)
+	if thumbCache[userId] then return thumbCache[userId] end
+	local ok, content = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok and content then
+		thumbCache[userId] = content
+		return content
+	end
+	return ""
+end
+
+local function rankColor(rank)
+	if rank == 1 then return Color3.fromRGB(255, 210, 75) end
+	if rank == 2 then return Color3.fromRGB(210, 210, 220) end
+	if rank == 3 then return Color3.fromRGB(205, 140, 80) end
+	return Color3.fromRGB(235, 235, 245)
+end
+
+local function fetchTop(store, keyName)
+	local entries = {}
+	local rankMap = {}
+
+	local ok, pages = pcall(function()
+		return store:GetSortedAsync(false, TOP_N)
+	end)
+	if not ok or not pages then
+		warn("[LeaderboardService] Failed to fetch", keyName)
+		return entries, rankMap
+	end
+
+	local page = pages:GetCurrentPage()
+	for rank, item in ipairs(page) do
+		local userId = tonumber(item.key)
+		local value = tonumber(item.value) or 0
+		if userId then
+			rankMap[userId] = rank
+			table.insert(entries, {
+				rank = rank,
+				userId = userId,
+				value = value,
+				name = getName(userId),
+				thumb = getThumb(userId),
+			})
+		end
+	end
+
+	return entries, rankMap
+end
+
+local function getBoardInstances(guiName)
+	local out = {}
+
+	local starterBoard = StarterGui:FindFirstChild(guiName)
+	if starterBoard then table.insert(out, starterBoard) end
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		local pg = plr:FindFirstChild("PlayerGui")
+		if pg then
+			local board = pg:FindFirstChild(guiName)
+			if board then table.insert(out, board) end
+		end
+	end
+
+	return out
+end
+
+local function getTemplateMetrics(templateFolder)
+	local minY = math.huge
+	local maxY = -math.huge
+
+	for _, child in ipairs(templateFolder:GetChildren()) do
+		if child:IsA("GuiObject") then
+			local posY = child.Position.Y.Offset
+			local sizeY = child.Size.Y.Offset
+			local bottom = posY + sizeY
+
+			if posY < minY then minY = posY end
+			if bottom > maxY then maxY = bottom end
+
+			if child:GetAttribute("BaseY") == nil then
+				child:SetAttribute("BaseY", child.Position.Y.Offset)
+			end
+		end
+	end
+
+	if minY == math.huge then
+		minY = 0
+		maxY = 32
+	end
+
+	return math.max(1, (maxY - minY) + 6)
+end
+
+local function applyRowData(rowFolder, rowIndex, rowHeight, entry, prefix)
+	for _, child in ipairs(rowFolder:GetChildren()) do
+		if child:IsA("GuiObject") then
+			local baseY = child:GetAttribute("BaseY")
+			if baseY == nil then
+				baseY = child.Position.Y.Offset
+				child:SetAttribute("BaseY", baseY)
+			end
+
+			child.Position = UDim2.new(
+				child.Position.X.Scale,
+				child.Position.X.Offset,
+				child.Position.Y.Scale,
+				baseY + ((rowIndex - 1) * rowHeight)
+			)
+		end
+	end
+
+	local rankLbl = rowFolder:FindFirstChild("Rank")
+	local userLbl = rowFolder:FindFirstChild("Username")
+	local amountLbl = rowFolder:FindFirstChild("Amount")
+	local icon = rowFolder:FindFirstChild("PlayerIcon")
+
+	if rankLbl and rankLbl:IsA("TextLabel") then rankLbl.Text = "#" .. tostring(entry.rank) end
+	if userLbl and userLbl:IsA("TextLabel") then userLbl.Text = entry.name end
+	if amountLbl and amountLbl:IsA("TextLabel") then amountLbl.Text = prefix .. NumberFormat.compact(entry.value) end
+	if icon and icon:IsA("ImageLabel") then icon.Image = entry.thumb end
+
+	local c = rankColor(entry.rank)
+	if rankLbl and rankLbl:IsA("TextLabel") then rankLbl.TextColor3 = c end
+	if userLbl and userLbl:IsA("TextLabel") then userLbl.TextColor3 = c end
+	if amountLbl and amountLbl:IsA("TextLabel") then amountLbl.TextColor3 = c end
+end
+
+local function renderIntoBoard(boardGui, entries, prefix)
+	local scroll = boardGui:FindFirstChild("Scroll")
+	if not scroll or not scroll:IsA("ScrollingFrame") then return end
+
+	local template = scroll:FindFirstChild("1")
+	if not template or not template:IsA("Folder") then
+		warn("[LeaderboardService] Missing template folder '1' in", boardGui.Name)
+		return
+	end
+
+	for _, child in ipairs(scroll:GetChildren()) do
+		if child:IsA("Folder") and child ~= template then
+			child:Destroy()
+		end
+	end
+
+	local rowHeight = getTemplateMetrics(template)
+
+	if #entries == 0 then
+		local rankLbl = template:FindFirstChild("Rank")
+		local userLbl = template:FindFirstChild("Username")
+		local amountLbl = template:FindFirstChild("Amount")
+		local icon = template:FindFirstChild("PlayerIcon")
+
+		if rankLbl and rankLbl:IsA("TextLabel") then rankLbl.Text = "-" end
+		if userLbl and userLbl:IsA("TextLabel") then userLbl.Text = "No data yet" end
+		if amountLbl and amountLbl:IsA("TextLabel") then amountLbl.Text = "-" end
+		if icon and icon:IsA("ImageLabel") then icon.Image = "" end
+
+		scroll.CanvasSize = UDim2.new(0, 0, 0, rowHeight + 8)
+		return
+	end
+
+	for i, entry in ipairs(entries) do
+		local row = (i == 1) and template or template:Clone()
+		if i > 1 then
+			row.Name = tostring(i)
+			row.Parent = scroll
+		end
+		applyRowData(row, i, rowHeight, entry, prefix)
+	end
+
+	scroll.CanvasSize = UDim2.new(0, 0, 0, (#entries * rowHeight) + 8)
+end
+
+local function refreshAllBoards()
+	for _, cfg in ipairs(BOARD_CONFIG) do
+		local entries, map = fetchTop(cfg.store, cfg.key)
+		rankMaps[cfg.key] = map
+
+		local boards = getBoardInstances(cfg.guiName)
+		for _, board in ipairs(boards) do
+			renderIntoBoard(board, entries, cfg.prefix)
+		end
+	end
+
+	nextRefreshAt = os.time() + REFRESH_SECONDS
+end
+
+_G.GetLeaderboardRanksForPlayer = function(player)
+	if not player then return nil end
+	return {
+		cash = rankMaps.cash[player.UserId],
+		wins = rankMaps.wins[player.UserId],
+		streak = rankMaps.streak[player.UserId],
+	}
+end
+
+local function timerLabel()
+	local part = workspace:FindFirstChild("LeaderboardResetPart")
+	if not part or not part:IsA("BasePart") then return nil end
+	local bb = part:FindFirstChildWhichIsA("BillboardGui")
+	if not bb then return nil end
+	local lbl = bb:FindFirstChild("TimerLbl") or bb:FindFirstChildWhichIsA("TextLabel")
+	if lbl and lbl:IsA("TextLabel") then return lbl end
+	return nil
+end
+
+task.spawn(function()
+	while true do
+		local lbl = timerLabel()
+		if lbl then
+			local left = math.max(0, nextRefreshAt - os.time())
+			lbl.Text = "Refresh in: " .. tostring(left) .. "s"
+		end
+		task.wait(1)
+	end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	task.delay(2, function()
+		if player.Parent then
+			refreshAllBoards()
+		end
+	end)
+end)
+
+task.spawn(function()
+	while true do
+		refreshAllBoards()
+		task.wait(REFRESH_SECONDS)
+	end
+end)
+
+print("[LeaderboardService] Ready")
