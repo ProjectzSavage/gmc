@@ -202,7 +202,14 @@ local function markClaimed(player, id, rewards)
 	end
 	if rewards:find("Mystery") then
 		local count = tonumber(rewards:match("%+(%d+) Mystery")) or 1
-		giveRandomChair(player, count)
+		local pool = {
+			"Cardboard","Rusty","Metal","Sand","Joker",
+			"Rock","Grass","Ice","Candy",
+			"Shiny","Snow","Brick","Water","Magma","Mirror","Deer"
+		}
+		if _G.ChairGrantMystery then
+			_G.ChairGrantMystery(player, count, pool)
+		end
 	end
 	if rewards:find("x2") then
 		local minutes = tonumber(rewards:match("x2 (%d+)min")) or 5
@@ -283,7 +290,7 @@ local function buildPayload(player, data)
 	end
 
 	local groupReady = false
-	local ok, inGroup = pcall(function() return player:IsInGroup(0) end) -- replace 0 with your group ID
+	local ok, inGroup = pcall(function() return player:IsInGroup(35973544) end) -- replace 0 with your group ID
 	if ok and inGroup then groupReady = true end
 	table.insert(categories.group, {
 		id = "group_main", rewards = "+$200, +1 Magnifier, +1 Hook",
