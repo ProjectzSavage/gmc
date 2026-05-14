@@ -1,0 +1,93 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+local NotifyPlayer = events:FindFirstChild("NotifyPlayer")
+
+local CLAIM_CASH = 67
+local COOLDOWN = 20
+
+local obbyFolder = workspace:WaitForChild("Obby")
+local chestModel = obbyFolder:WaitForChild("Chest"):WaitForChild("claim")
+
+local prompt = chestModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+if not prompt then
+	error("[ObbyChestService] No ProximityPrompt found inside workspace.Obby.Chest")
+end
+
+local function getSpawnPart()
+	local named = workspace:FindFirstChild("SpawnLocation") or workspace:FindFirstChild("Spawn")
+	if named and named:IsA("BasePart") then
+		return named
+	end
+	return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+end
+
+local spawnPart = getSpawnPart()
+if not spawnPart then
+	warn("[ObbyChestService] No SpawnLocation found; teleport will be skipped")
+end
+
+local nextClaimAt = {} -- [userId] = os.clock() timestamp
+
+local function setPromptTextFor(player)
+	local now = os.clock()
+	local t = nextClaimAt[player.UserId] or 0
+	local left = math.max(0, math.ceil(t - now))
+	if left > 0 then
+		prompt.ObjectText = "Chest (" .. tostring(left) .. "s)"
+	else
+		prompt.ObjectText = "Chest (+$" .. tostring(CLAIM_CASH) .. ")"
+	end
+end
+
+prompt.Triggered:Connect(function(player)
+	local now = os.clock()
+	local allowedAt = nextClaimAt[player.UserId] or 0
+	if now < allowedAt then
+		local left = math.ceil(allowedAt - now)
+		if NotifyPlayer then
+			NotifyPlayer:FireClient(player, {
+				title = "Chest Cooldown",
+				message = "Wait " .. tostring(left) .. "s",
+				kind = "warn",
+				duration = 2,
+			})
+		end
+		setPromptTextFor(player)
+		return
+	end
+
+	local stats = player:FindFirstChild("leaderstats")
+	local cash = stats and stats:FindFirstChild("Cash")
+	if cash and cash:IsA("IntValue") then
+		cash.Value += CLAIM_CASH
+	end
+
+	nextClaimAt[player.UserId] = now + COOLDOWN
+	setPromptTextFor(player)
+
+	if spawnPart and player.Character then
+		local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			hrp.CFrame = spawnPart.CFrame + Vector3.new(0, 5, 0)
+		end
+	end
+
+	if NotifyPlayer then
+		NotifyPlayer:FireClient(player, {
+			title = "Chest Claimed",
+			message = "+$" .. tostring(CLAIM_CASH),
+			kind = "success",
+			duration = 2,
+		})
+	end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	nextClaimAt[player.UserId] = 0
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	nextClaimAt[player.UserId] = nil
+end)
