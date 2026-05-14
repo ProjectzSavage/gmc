@@ -1,0 +1,63 @@
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local playerGui = player:WaitForChild("PlayerGui")
+local gameGui = playerGui:WaitForChild("GameGui")
+
+local statsFrame = gameGui:WaitForChild("StatsFrame")
+local shopFrame = gameGui:WaitForChild("ShopF")
+local scroll = shopFrame:WaitForChild("Scroll")
+local openShopBtn = gameGui:WaitForChild("OpenShopBtn")
+
+local function findFirst(parent, names)
+	for _, n in ipairs(names) do
+		local obj = parent:FindFirstChild(n, true)
+		if obj then return obj end
+	end
+	return nil
+end
+
+local cashBtn = findFirst(statsFrame, { "CashShopBtn", "OpenCashShopBtn", "CashBtn" })
+local winsBtn = findFirst(statsFrame, { "WinsShopBtn", "OpenWinsShopBtn", "WinsBtn" })
+
+local cashAnchor = findFirst(scroll, { "Cash300", "Cash1000", "Cash2500", "Cash5000" })
+local winsAnchor = findFirst(scroll, { "Wins10", "Wins25", "Wins50", "Wins100" })
+
+local function openShop()
+	if _G.UIWindows and _G.UIWindows.open then
+		_G.UIWindows.open("shop")
+	else
+		if not shopFrame.Visible then
+			openShopBtn:Activate()
+		end
+	end
+end
+
+local function scrollTo(guiObject)
+	if not guiObject then return end
+
+	task.wait(0.15)
+
+	local y = guiObject.AbsolutePosition.Y - scroll.AbsolutePosition.Y + scroll.CanvasPosition.Y
+	scroll.CanvasPosition = Vector2.new(0, math.max(0, math.floor(y - 8)))
+end
+
+if cashBtn and cashBtn:IsA("GuiButton") then
+	cashBtn.MouseButton1Click:Connect(function()
+		openShop()
+		scrollTo(cashAnchor)
+	end)
+else
+	warn("[StatsShopQuickAccess] Cash button not found")
+end
+
+if winsBtn and winsBtn:IsA("GuiButton") then
+	winsBtn.MouseButton1Click:Connect(function()
+		openShop()
+		scrollTo(winsAnchor)
+	end)
+else
+	warn("[StatsShopQuickAccess] Wins button not found")
+end
+
+print("[StatsShopQuickAccess] Ready")
