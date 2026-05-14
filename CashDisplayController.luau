@@ -3,6 +3,8 @@ local RS = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 local RunService = game:GetService("RunService")
 
+local NumberFormat = require(RS:WaitForChild("NumberFormat"))
+
 local localPlayer = Players.LocalPlayer
 local Events = RS:WaitForChild("Events")
 local StealRequest = Events:WaitForChild("StealRequest")
@@ -12,10 +14,7 @@ local TestSteal = Events:WaitForChild("TestSteal")
 local IS_STUDIO = RunService:IsStudio()
 
 local function compact(n)
-	n = tonumber(n) or 0
-	if n >= 1000000 then return string.format("%.1fM", n / 1000000) end
-	if n >= 1000 then return string.format("%.1fK", n / 1000) end
-	return tostring(n)
+	return NumberFormat.compact(n)
 end
 
 local function getCashValue(plr)
