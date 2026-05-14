@@ -18,10 +18,10 @@ local ShopRequestRefresh = ensureEvent("ShopRequestRefresh")
 
 -- Replace all id=0 with your real IDs.
 local SHOP = {
-	vip_pack       = { kind = "gamepass",   id = 1804718405, perk = "VIPPack" },
-	double_streak = { kind = "gamepass",   id = 1805164282, perk = "DoubleStreak" },
-	double_cash   = { kind = "gamepass",   id = 1804214483, perk = "DoubleCash" },
-	double_wins   = { kind = "gamepass",   id = 1804012509, perk = "DoubleWins" },
+	vip_pack       = { kind = "gamepass",   id = 1839628382, perk = "VIPPack" },
+	double_streak = { kind = "gamepass",   id = 1840844336, perk = "DoubleStreak" },
+	double_cash   = { kind = "gamepass",   id = 1841496309, perk = "DoubleCash" },
+	double_wins   = { kind = "gamepass",   id = 1841592323, perk = "DoubleWins" },
 
 	cash_300      = { kind = "devproduct", id = 3579858207, grant = { cash = 300 } },
 	cash_1000     = { kind = "devproduct", id = 3579859740, grant = { cash = 1000 } },
