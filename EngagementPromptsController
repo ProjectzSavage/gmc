@@ -1,0 +1,52 @@
+local Players = game:GetService("Players")
+local SocialService = game:GetService("SocialService")
+local StarterGui = game:GetService("StarterGui")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+
+-- Edit times here
+local INVITE_DELAY = 90
+local FAVORITE_DELAY = 180
+
+local promptedInvite = false
+local promptedFavorite = false
+
+local function promptInvite()
+	if promptedInvite then return end
+	promptedInvite = true
+
+	local okCan, canInvite = pcall(function()
+		return SocialService:CanSendGameInviteAsync(player)
+	end)
+
+	if okCan and canInvite then
+		pcall(function()
+			SocialService:PromptGameInvite(player)
+		end)
+	end
+end
+
+local function promptFavorite()
+	if promptedFavorite then return end
+	promptedFavorite = true
+
+	-- Roblox core favorite prompt
+	pcall(function()
+		StarterGui:SetCore("PromptSetFavorite", game.PlaceId, true)
+	end)
+end
+
+task.delay(INVITE_DELAY, function()
+	if player.Parent and not RunService:IsStudio() then
+		promptInvite()
+	end
+end)
+
+task.delay(FAVORITE_DELAY, function()
+	if player.Parent and not RunService:IsStudio() then
+		promptFavorite()
+	end
+end)
+
+print("[EngagementPromptsController] Ready")
