@@ -1,0 +1,92 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+local NotifyPlayer = events:WaitForChild("NotifyPlayer")
+
+local triggerPart = workspace:WaitForChild("LeaderboardNotifyPart")
+local inside = {}
+
+local function kindFromBest(best)
+	if best == 1 then return "success" end
+	if best == 2 then return "info" end
+	if best == 3 then return "warn" end
+	return "info"
+end
+
+local function fmt(rank)
+	if rank then return "#" .. tostring(rank) end
+	return ">100"
+end
+
+local function getRanks(player)
+	if _G.GetLeaderboardRanksForPlayer then
+		return _G.GetLeaderboardRanksForPlayer(player)
+	end
+	return nil
+end
+
+local function bestRank(r)
+	if not r then return nil end
+	local vals = {}
+	if r.cash then table.insert(vals, r.cash) end
+	if r.wins then table.insert(vals, r.wins) end
+	if r.streak then table.insert(vals, r.streak) end
+	if #vals == 0 then return nil end
+	table.sort(vals)
+	return vals[1]
+end
+
+local function showRankNotify(player)
+	local r = getRanks(player)
+	if not r then
+		NotifyPlayer:FireClient(player, {
+			title = "Your Leaderboard Rank",
+			message = "Ranks unavailable",
+			kind = "warn",
+			duration = 2.5,
+		})
+		return
+	end
+
+	local b = bestRank(r)
+	NotifyPlayer:FireClient(player, {
+		title = "Your Leaderboard Rank",
+		message = "Cash " .. fmt(r.cash) .. " | Wins " .. fmt(r.wins) .. " | Streak " .. fmt(r.streak),
+		kind = kindFromBest(b),
+		duration = 4,
+	})
+end
+
+triggerPart.Touched:Connect(function(hit)
+	local character = hit and hit.Parent
+	if not character then return end
+	local player = Players:GetPlayerFromCharacter(character)
+	if not player then return end
+	if inside[player.UserId] then return end
+
+	inside[player.UserId] = true
+	showRankNotify(player)
+end)
+
+RunService.Heartbeat:Connect(function()
+	for userId in pairs(inside) do
+		local p = Players:GetPlayerByUserId(userId)
+		if not p then
+			inside[userId] = nil
+		else
+			local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+			if not hrp then
+				inside[userId] = nil
+			else
+				local maxDist = (triggerPart.Size.Magnitude * 0.65) + 8
+				if (hrp.Position - triggerPart.Position).Magnitude > maxDist then
+					inside[userId] = nil
+				end
+			end
+		end
+	end
+end)
+
+print("[LeaderboardTouchNotify] Ready")
