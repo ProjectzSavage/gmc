@@ -8,7 +8,12 @@ local RS = game:GetService("ReplicatedStorage")
 local Events = RS:WaitForChild("Events")
 local RewardDataStore = DataStoreService:GetDataStore("RewardsData_V1")
 print("[Rewards] DataStore loaded")
-
+local ChairStore = DataStoreService:GetDataStore("GMC_Chairs_V1")
+local MYSTERY_CHAIR_POOL = {
+	"Cardboard","Rusty","Metal","Sand","Joker",
+	"Rock","Grass","Ice","Candy",
+	"Shiny","Snow","Brick","Water","Magma","Mirror",
+}
 local function ensureEvent(name)
 	local e = Events:FindFirstChild(name)
 	if e then return e end
@@ -68,7 +73,58 @@ local function loadData(player)
 		},
 	}
 end
+local function giveRandomChair(player, count)
+	count = math.max(1, tonumber(count) or 1)
 
+	local key = "c_" .. player.UserId
+	local data = nil
+	local okLoad, loaded = pcall(function()
+		return ChairStore:GetAsync(key)
+	end)
+
+	if okLoad and type(loaded) == "table" then
+		data = loaded
+	else
+		data = { owned = {"Default"}, equipped = "Default" }
+	end
+
+	data.owned = data.owned or {"Default"}
+	data.equipped = data.equipped or "Default"
+
+	local ownedSet = {}
+	for _, c in ipairs(data.owned) do
+		ownedSet[c] = true
+	end
+
+	local granted = {}
+	for _ = 1, count do
+		local candidates = {}
+		for _, chairName in ipairs(MYSTERY_CHAIR_POOL) do
+			if not ownedSet[chairName] then
+				table.insert(candidates, chairName)
+			end
+		end
+
+		if #candidates == 0 then break end
+		local pick = candidates[math.random(1, #candidates)]
+		ownedSet[pick] = true
+		table.insert(data.owned, pick)
+		table.insert(granted, pick)
+	end
+
+	pcall(function()
+		ChairStore:SetAsync(key, data)
+	end)
+
+	if #granted > 0 then
+		NotifyPlayer:FireClient(player, {
+			title = "Mystery Reward",
+			message = "You got: " .. table.concat(granted, ", "),
+			kind = "success",
+			duration = 4,
+		})
+	end
+end
 local function saveData(player)
 	local data = playerData[player.UserId]
 	if not data then return end
@@ -145,8 +201,8 @@ local function markClaimed(player, id, rewards)
 		data.powerups.hook = (data.powerups.hook or 0) + count
 	end
 	if rewards:find("Mystery") then
-		local count = tonumber(rewards:match("+(%d+) Mystery")) or 1
-		data.powerups.mystery = (data.powerups.mystery or 0) + count
+		local count = tonumber(rewards:match("%+(%d+) Mystery")) or 1
+		giveRandomChair(player, count)
 	end
 	if rewards:find("x2") then
 		local minutes = tonumber(rewards:match("x2 (%d+)min")) or 5
