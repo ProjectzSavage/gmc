@@ -39,7 +39,7 @@ local function restoreMovement(h, hrp)
 		h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
 		h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
 		h:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-		h.WalkSpeed = 16
+		h.WalkSpeed = 21
 		h.JumpPower = 50
 		h.JumpHeight = 7.2
 		h.Sit = false
@@ -53,7 +53,7 @@ local function lockSeated(h, hrp, seatPart)
 	if not h or not hrp then return end
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
-	hrp.CFrame = seatPart.CFrame * CFrame.new(0, seatPart.Size.Y / 2 + 2.05, 0)
+	hrp.CFrame = seatPart.CFrame * CFrame.new(0, seatPart.Size.Y / 2 + 1.65, 0)
 	hrp.Anchored = true
 
 	h.AutoRotate = false
@@ -220,6 +220,10 @@ _G.BotSeatManager = {
 	getTableModel = function(tableId)
 		local st = botTables[tableId]
 		return st and st.model or nil
+	end,
+	getPlayerForTable = function(tableId)
+		local st = botTables[tableId]
+		return st and st.player or nil
 	end,
 	setPromptEnabled = function(tableId, enabled)
 		local st = botTables[tableId]
