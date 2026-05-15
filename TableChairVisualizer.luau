@@ -15,7 +15,20 @@ local function setBasicChairVisibility(tableModel, slot, visible)
 		end
 	end
 end
-
+local function applyRainbowEffect(model)
+	task.spawn(function()
+		while model and model.Parent do
+			local h = (tick() * 0.2) % 1
+			local c = Color3.fromHSV(h, 1, 1)
+			for _, d in ipairs(model:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.Color = c
+				end
+			end
+			task.wait(0.06)
+		end
+	end)
+end
 local function spawnChair(tableModel, slot, chairName)
 	local playerChairs = tableModel:FindFirstChild("PlayerChairs")
 	if not playerChairs then
@@ -65,6 +78,9 @@ local function spawnChair(tableModel, slot, chairName)
 		weld.Part0 = primary
 		weld.Part1 = seat
 		weld.Parent = primary
+	end
+	if chairName == "Rainbow" then
+		applyRainbowEffect(clone)
 	end
 end
 
