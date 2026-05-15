@@ -7,6 +7,11 @@ local Events = RS:WaitForChild("Events")
 local SetHeadTagsVisible = Events:WaitForChild("SetHeadTagsVisible")
 local hiddenNames = {}
 
+-- BADGE ICONS (72x72 recommended)
+local ICON_PREMIUM  = "rbxassetid://101904671739135" -- TODO
+local ICON_VERIFIED = "rbxassetid://102865349901178" -- TODO
+local ICON_HAMMER   = "rbxassetid://134307675251410" -- TODO
+
 local function isNameHidden(name)
 	return hiddenNames[name] == true
 end
@@ -38,6 +43,139 @@ local function tierColor(n)
 	return Color3.fromRGB(165, 190, 255)
 end
 
+local function ensureIcon(iconRow, name, imageId, order)
+	local icon = iconRow:FindFirstChild(name)
+	if not icon then
+		icon = Instance.new("ImageLabel")
+		icon.Name = name
+		icon.Size = UDim2.fromScale(0.45, 0.5)
+		icon.BackgroundTransparency = 1
+		icon.LayoutOrder = order
+		icon.Parent = iconRow
+	end
+	icon.Image = imageId
+	icon.Visible = true
+	return icon
+end
+
+local function clearIcons(iconRow)
+	for _, c in ipairs(iconRow:GetChildren()) do
+		if c:IsA("ImageLabel") then
+			c:Destroy()
+		end
+	end
+end
+
+local function createTagGui(parent, name, adornee)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = name
+	bb.Size = UDim2.fromScale(5.2, 5.1)
+	bb.StudsOffset = Vector3.new(0, 3, 0)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 300
+	bb.Parent = parent
+	if adornee then
+		bb.Adornee = adornee
+	end
+
+	local container = Instance.new("Frame")
+	container.Size = UDim2.fromScale(1, 1)
+	container.BackgroundTransparency = 1
+	container.Parent = bb
+
+	local streakLbl = Instance.new("TextLabel")
+	streakLbl.Name = "StreakLbl"
+	streakLbl.Size = UDim2.new(1, 0, 0.2, 0)
+	streakLbl.Position = UDim2.new(0, 0, 0.45, 0)
+	streakLbl.BackgroundTransparency = 1
+	streakLbl.Text = ""
+	streakLbl.Font = Enum.Font.FredokaOne
+	streakLbl.TextScaled = true
+	streakLbl.TextStrokeTransparency = 0.18
+	streakLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	streakLbl.Parent = container
+
+	local iconRow = Instance.new("Frame")
+	iconRow.Name = "IconRow"
+	iconRow.Size = UDim2.new(0.24, 0, 0.18, 0)
+	iconRow.Position = UDim2.new(-0.05, 0, 0.63, 0)
+	iconRow.BackgroundTransparency = 1
+	iconRow.Parent = container
+
+	local list = Instance.new("UIListLayout")
+	list.FillDirection = Enum.FillDirection.Horizontal
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	list.VerticalAlignment = Enum.VerticalAlignment.Center
+	list.Padding = UDim.new(0, 3)
+	list.Parent = iconRow
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.Name = "NameLbl"
+	nameLbl.Size = UDim2.new(0.76, 0, 0.22, 0)
+	nameLbl.Position = UDim2.new(0.22, 0, 0.61, 0)
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.Text = ""
+	nameLbl.Font = Enum.Font.FredokaOne
+	nameLbl.TextScaled = true
+	nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLbl.TextStrokeTransparency = 0.15
+	nameLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+	nameLbl.Parent = container
+
+	local subLbl = Instance.new("TextLabel")
+	subLbl.Name = "SubLbl"
+	subLbl.Size = UDim2.new(0.96, 0, 0.10, 0)
+	subLbl.Position = UDim2.new(0.46, 0, 0.77, 0)
+	subLbl.BackgroundTransparency = 1
+	subLbl.Text = ""
+	subLbl.Font = Enum.Font.FredokaOne
+	subLbl.TextScaled = true
+	subLbl.TextColor3 = Color3.fromRGB(255, 210, 70)
+	subLbl.TextStrokeTransparency = 0.25
+	subLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	subLbl.TextXAlignment = Enum.TextXAlignment.Left
+	subLbl.Parent = container
+
+	return bb, streakLbl, nameLbl, subLbl, iconRow
+end
+
+local function updateRoleAndBadges(player, nameLbl, subLbl, iconRow)
+	nameLbl.Text = (player.DisplayName ~= "" and player.DisplayName) or player.Name
+
+	local isVip = player:GetAttribute("HasVIP") == true
+	local inGroup = player:GetAttribute("InGroupTag") == true
+	local hasPremium = player:GetAttribute("HasPremiumTag") == true
+	local isVerified = player:GetAttribute("IsVerifiedTag") == true
+	local isHammer = player:GetAttribute("IsHammerTag") == true
+
+	if isVip then
+		subLbl.Text = "VIP"
+		subLbl.TextColor3 = Color3.fromRGB(255, 210, 70)
+	elseif inGroup then
+		subLbl.Text = "GROUP"
+		subLbl.TextColor3 = Color3.fromRGB(130, 220, 255)
+	else
+		subLbl.Text = ""
+	end
+
+	clearIcons(iconRow)
+	local order = 1
+	if hasPremium and ICON_PREMIUM ~= "rbxassetid://0" then
+		ensureIcon(iconRow, "PremiumIcon", ICON_PREMIUM, order)
+		order += 1
+	end
+	if isVerified and ICON_VERIFIED ~= "rbxassetid://0" then
+		ensureIcon(iconRow, "VerifiedIcon", ICON_VERIFIED, order)
+		order += 1
+	end
+	if isHammer and ICON_HAMMER ~= "rbxassetid://0" then
+		ensureIcon(iconRow, "HammerIcon", ICON_HAMMER, order)
+		order += 1
+	end
+end
+
 local function makeHeadTag(player)
 	local char = player.Character or player.CharacterAdded:Wait()
 	local head = char:WaitForChild("Head", 10)
@@ -52,56 +190,17 @@ local function makeHeadTag(player)
 		if oldLocal then oldLocal:Destroy() end
 	end
 
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "PlayerHeadTag"
-	-- Scale-based size per request.
-	bb.Size = UDim2.fromScale(5.2, 5.1)
-	bb.StudsOffset = Vector3.new(0, 3, 0)
-	bb.AlwaysOnTop = true
-	bb.LightInfluence = 0
-	bb.MaxDistance = 300
-	bb.Parent = head
-	bb.Enabled = not isNameHidden(player.Name)
+	local worldBb, streakLbl, nameLbl, subLbl, iconRow = createTagGui(head, "PlayerHeadTag", nil)
+	worldBb.Enabled = not isNameHidden(player.Name)
 
-	local container = Instance.new("Frame")
-	container.Size = UDim2.fromScale(1, 1)
-	container.BackgroundTransparency = 1
-	container.Parent = bb
-
-	local streakLbl = Instance.new("TextLabel")
-	streakLbl.Name = "StreakLbl"
-	streakLbl.Size = UDim2.new(1, 0, 0.2, 0)
-	streakLbl.Position = UDim2.new(0, 0, 0.45, 0)
-	streakLbl.BackgroundTransparency = 1
-	streakLbl.Text = ""
-	streakLbl.Font = Enum.Font.GothamBlack
-	streakLbl.TextScaled = true
-	streakLbl.TextStrokeTransparency = 0.18
-	streakLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	streakLbl.Parent = container
-
-	local nameLbl = Instance.new("TextLabel")
-	nameLbl.Name = "NameLbl"
-	nameLbl.Size = UDim2.new(1, 0, 0.52, 0)
-	nameLbl.Position = UDim2.new(0, 0, 0.48, 0)
-	nameLbl.BackgroundTransparency = 1
-	nameLbl.Text = player.DisplayName ~= "" and player.DisplayName or player.Name
-	nameLbl.Font = Enum.Font.GothamBold
-	nameLbl.TextScaled = true
-	nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-	nameLbl.TextStrokeTransparency = 0.15
-	nameLbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	nameLbl.Parent = container
-
-	local localStreakLbl = nil
+	local localStreakLbl, localNameLbl, localSubLbl, localIconRow
 	if player == localPlayer and pg then
-		-- Local copy so you can see your own tag from your camera as well.
-		local localBb = bb:Clone()
-		localBb.Name = "PlayerHeadTagLocal"
-		localBb.Parent = pg
-		localBb.Adornee = head
+		local localBb, ls, ln, lsub, li = createTagGui(pg, "PlayerHeadTagLocal", head)
 		localBb.Enabled = not isNameHidden(player.Name)
-		localStreakLbl = localBb:FindFirstChild("StreakLbl", true)
+		localStreakLbl = ls
+		localNameLbl = ln
+		localSubLbl = lsub
+		localIconRow = li
 	end
 
 	local function setStreak(label, n)
@@ -110,15 +209,21 @@ local function makeHeadTag(player)
 			label.Text = ""
 			return
 		end
-		local col = tierColor(n)
-		label.Text = "?? " .. tostring(n)
-		label.TextColor3 = col
+		label.Text = "🔥 " .. tostring(n)
+		label.TextColor3 = tierColor(n)
 	end
 
 	local function updateStreak(v)
 		local n = tonumber(v) or 0
 		setStreak(streakLbl, n)
 		setStreak(localStreakLbl, n)
+	end
+
+	local function updateRoleVisuals()
+		updateRoleAndBadges(player, nameLbl, subLbl, iconRow)
+		if localNameLbl and localSubLbl and localIconRow then
+			updateRoleAndBadges(player, localNameLbl, localSubLbl, localIconRow)
+		end
 	end
 
 	local stats = player:FindFirstChild("leaderstats") or player:WaitForChild("leaderstats", 15)
@@ -129,12 +234,22 @@ local function makeHeadTag(player)
 	else
 		updateStreak(0)
 	end
+
+	-- React to server-pushed identity attributes
+	for _, attr in ipairs({
+		"HasVIP", "InGroupTag", "HasPremiumTag", "IsVerifiedTag", "IsHammerTag"
+		}) do
+		player:GetAttributeChangedSignal(attr):Connect(updateRoleVisuals)
+	end
+
+	updateRoleVisuals()
 end
 
 local function hookPlayer(player)
 	task.spawn(function()
 		makeHeadTag(player)
 	end)
+
 	player.CharacterAdded:Connect(function()
 		task.wait(0.25)
 		makeHeadTag(player)
