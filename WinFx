@@ -1,0 +1,109 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local player = Players.LocalPlayer
+local events = RS:WaitForChild("Events")
+local gameOverEvent = events:WaitForChild("GameOver")
+local resetAllEvent = events:FindFirstChild("ResetAll")
+
+local function getCamera()
+	return workspace.CurrentCamera
+end
+
+local defaultFov = (getCamera() and getCamera().FieldOfView) or 70
+
+local function resetFov()
+	local cam = getCamera()
+	if cam then
+		cam.FieldOfView = defaultFov
+	end
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "WinFxGui"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local confettiLayer = Instance.new("Frame")
+confettiLayer.Name = "ConfettiLayer"
+confettiLayer.Size = UDim2.fromScale(1, 1)
+confettiLayer.BackgroundTransparency = 1
+confettiLayer.ClipsDescendants = true
+confettiLayer.Parent = gui
+
+local winSound = Instance.new("Sound")
+winSound.Name = "WinSound"
+winSound.SoundId = "rbxassetid://1843520822"
+winSound.Volume = 0.8
+winSound.Parent = SoundService
+
+local colors = {
+	Color3.fromRGB(255, 70, 92),
+	Color3.fromRGB(251, 191, 36),
+	Color3.fromRGB(34, 197, 94),
+	Color3.fromRGB(56, 189, 248),
+	Color3.fromRGB(168, 85, 247),
+	Color3.fromRGB(244, 114, 182),
+}
+
+local function spawnConfettiPiece()
+	local piece = Instance.new("Frame")
+	piece.Size = UDim2.fromOffset(math.random(6, 10), math.random(10, 18))
+	piece.Position = UDim2.new(math.random(), 0, -0.06, math.random(-80, 10))
+	piece.BackgroundColor3 = colors[math.random(1, #colors)]
+	piece.BorderSizePixel = 0
+	piece.Rotation = math.random(-180, 180)
+	piece.ZIndex = 20
+	piece.Parent = confettiLayer
+
+	local xDrift = math.random(-140, 140)
+	local endPos = UDim2.new(piece.Position.X.Scale, xDrift, 1.12, math.random(0, 120))
+	local tweenTime = math.random(120, 220) / 100
+
+	local moveTween = TweenService:Create(piece, TweenInfo.new(tweenTime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Position = endPos,
+		Rotation = piece.Rotation + math.random(260, 620),
+		BackgroundTransparency = 0.2,
+	})
+	moveTween:Play()
+
+	task.delay(tweenTime + 0.1, function()
+		if piece and piece.Parent then
+			piece:Destroy()
+		end
+	end)
+end
+
+local function playWinEffects()
+	resetFov()
+	winSound:Stop()
+	winSound.TimePosition = 0
+	winSound:Play()
+
+	for i = 1, 140 do
+		task.delay(i * 0.012, spawnConfettiPiece)
+	end
+end
+
+gameOverEvent.OnClientEvent:Connect(function(payload)
+	resetFov()
+	if type(payload) ~= "table" then return end
+	if payload.winner == player.Name then
+		playWinEffects()
+	end
+end)
+
+if resetAllEvent then
+	resetAllEvent.OnClientEvent:Connect(function()
+		task.delay(0.05, resetFov)
+	end)
+end
+
+player.CharacterAdded:Connect(function()
+	task.wait(0.2)
+	resetFov()
+end)
