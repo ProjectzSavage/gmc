@@ -1,0 +1,118 @@
+local RS = game:GetService("ReplicatedStorage")
+
+local chairsRoot = RS:WaitForChild("Chairs")
+local equippable = chairsRoot:WaitForChild("EquippableChairs")
+local botTablesFolder = workspace:WaitForChild("BotTables")
+
+local FLOOR_OFFSET = -1.65
+
+local function setBasicChairVisibility(tableModel, visible)
+	local basic = tableModel:FindFirstChild("BasicChairB")
+	if not basic then return end
+	for _, part in ipairs(basic:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Transparency = visible and 0 or 1
+		end
+	end
+end
+
+local function applyRainbowEffect(model)
+	task.spawn(function()
+		while model and model.Parent do
+			local h = (tick() * 0.2) % 1
+			local c = Color3.fromHSV(h, 1, 1)
+			for _, d in ipairs(model:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.Color = c
+				end
+			end
+			task.wait(0.06)
+		end
+	end)
+end
+
+local function spawnBotChair(tableModel, chairName)
+	local playerChairs = tableModel:FindFirstChild("PlayerChairs")
+	if not playerChairs then
+		playerChairs = Instance.new("Folder")
+		playerChairs.Name = "PlayerChairs"
+		playerChairs.Parent = tableModel
+	end
+
+	local existing = playerChairs:FindFirstChild("B_Chair")
+	if existing then existing:Destroy() end
+
+	local seat = tableModel:FindFirstChild("SeatB")
+	if not seat then return end
+
+	if not chairName or chairName == "Default" then
+		setBasicChairVisibility(tableModel, true)
+		return
+	end
+
+	local source = equippable:FindFirstChild(chairName)
+	if not source then
+		setBasicChairVisibility(tableModel, true)
+		return
+	end
+
+	setBasicChairVisibility(tableModel, false)
+
+	local clone = source:Clone()
+	clone.Name = "B_Chair"
+
+	for _, item in ipairs(clone:GetDescendants()) do
+		if item:IsA("LuaSourceContainer") or item:IsA("Seat") then
+			item:Destroy()
+		end
+	end
+
+	clone.Parent = playerChairs
+
+	local _, size = clone:GetBoundingBox()
+	clone:PivotTo(seat.CFrame * CFrame.new(0, FLOOR_OFFSET + (size.Y / 2), 0))
+
+	local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart")
+	if primary then
+		primary.Anchored = false
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = primary
+		weld.Part1 = seat
+		weld.Parent = primary
+	end
+
+	if chairName == "Rainbow" then
+		applyRainbowEffect(clone)
+	end
+end
+
+task.spawn(function()
+	local cache = {}
+	while true do
+		task.wait(0.5)
+
+		if not _G.BotSeatManager or not _G.GetEquippedChair then
+			continue
+		end
+
+		for _, model in ipairs(botTablesFolder:GetChildren()) do
+			if model:IsA("Model") then
+				local tableId = model.Name
+				local player = nil
+				if _G.BotSeatManager.getPlayerForTable then
+					player = _G.BotSeatManager.getPlayerForTable(tableId)
+				end
+
+				local equipped = player and _G.GetEquippedChair(player) or "Default"
+				local key = player and (tostring(player.UserId) .. ":" .. equipped) or "none"
+
+				if cache[tableId] ~= key then
+					cache[tableId] = key
+					spawnBotChair(model, equipped)
+				end
+			end
+		end
+	end
+end)
+
+print("[BotTableChairVisualizer] Ready")
