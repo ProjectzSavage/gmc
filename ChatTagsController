@@ -1,0 +1,34 @@
+local Players = game:GetService("Players")
+local TextChatService = game:GetService("TextChatService")
+
+if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
+	return
+end
+
+TextChatService.OnIncomingMessage = function(message)
+	local props = Instance.new("TextChatMessageProperties")
+	local src = message.TextSource
+	if not src then return props end
+
+	local p = Players:GetPlayerByUserId(src.UserId)
+	if not p then return props end
+
+	local tags = {}
+
+	if p:GetAttribute("IsOwnerTag") == true then
+		table.insert(tags, "<font color='#ff5a5a'>[OWNER]</font>")
+	end
+	if p:GetAttribute("HasVIP") == true then
+		table.insert(tags, "<font color='#ffd24a'>[VIP]</font>")
+	elseif p:GetAttribute("InGroupTag") == true then
+		table.insert(tags, "<font color='#82dcff'>[GROUP]</font>")
+	end
+
+	if #tags > 0 then
+		props.PrefixText = table.concat(tags, " ") .. " " .. (message.PrefixText or "")
+	end
+
+	return props
+end
+
+print("[ChatTagsController] Ready")
