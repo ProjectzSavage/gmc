@@ -1,0 +1,55 @@
+local RunService = game:GetService("RunService")
+
+local showcaseFolder = workspace:WaitForChild("RobuxChairShowcase")
+
+local animatedChairs = {
+	Hacker = true,
+	Rainbow = true,
+	Bloodmoon = true,
+	Portal = true,
+}
+
+local spinSpeed = math.rad(35)
+local bobHeight = 0.45
+local bobSpeed = 0.85
+
+local tracked = {}
+
+local function registerChair(model)
+	if not model:IsA("Model") then return end
+	if not animatedChairs[model.Name] then return end
+
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+		end
+	end
+
+	tracked[model] = {
+		base = model:GetPivot(),
+		offsetSeed = math.random() * 30,
+	}
+end
+
+for _, child in ipairs(showcaseFolder:GetChildren()) do
+	registerChair(child)
+end
+
+showcaseFolder.ChildAdded:Connect(registerChair)
+showcaseFolder.ChildRemoved:Connect(function(model)
+	tracked[model] = nil
+end)
+
+RunService.Heartbeat:Connect(function()
+	local t = os.clock()
+	for model, info in pairs(tracked) do
+		if model.Parent then
+			local y = math.sin((t + info.offsetSeed) * bobSpeed * math.pi) * bobHeight
+			local spin = CFrame.Angles(0, t * spinSpeed, 0)
+			model:PivotTo(info.base * CFrame.new(0, y, 0) * spin)
+		else
+			tracked[model] = nil
+		end
+	end
+end)
