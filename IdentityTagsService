@@ -1,6 +1,5 @@
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
-local TextChatService = game:GetService("TextChatService")
 
 local GROUP_ID = 35973544 -- TODO
 local VIP_GAMEPASS_ID = 1839628382 -- TODO
@@ -18,91 +17,49 @@ local HAMMER_IDS = {
 	3721585498,-- TODO
 }
 
-local function toSet(arr)
-	local set = {}
-	for _, id in ipairs(arr) do
-		set[id] = true
-	end
-	return set
+local function toSet(t)
+	local s = {}
+	for _, id in ipairs(t) do s[id] = true end
+	return s
 end
 
-local OWNER_SET = toSet(OWNER_IDS)
-local VERIFIED_SET = toSet(VERIFIED_IDS)
-local HAMMER_SET = toSet(HAMMER_IDS)
+local OWNER = toSet(OWNER_IDS)
+local VERIFIED = toSet(VERIFIED_IDS)
+local HAMMER = toSet(HAMMER_IDS)
 
-local function inGroup(player)
+local function inGroup(p)
 	if GROUP_ID <= 0 then return false end
-	local ok, result = pcall(function()
-		return player:IsInGroup(GROUP_ID)
-	end)
+	local ok, result = pcall(function() return p:IsInGroup(GROUP_ID) end)
 	return ok and result == true
 end
 
-local function hasVip(player)
+local function hasVip(p)
 	if VIP_GAMEPASS_ID <= 0 then return false end
 	local ok, result = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, VIP_GAMEPASS_ID)
+		return MarketplaceService:UserOwnsGamePassAsync(p.UserId, VIP_GAMEPASS_ID)
 	end)
 	return ok and result == true
 end
 
-local function hasPremium(player)
-	return player.MembershipType == Enum.MembershipType.Premium
+local function apply(p)
+	p:SetAttribute("HasVIP", hasVip(p))
+	p:SetAttribute("InGroupTag", inGroup(p))
+	p:SetAttribute("HasPremiumTag", p.MembershipType == Enum.MembershipType.Premium)
+	p:SetAttribute("IsVerifiedTag", VERIFIED[p.UserId] == true)
+	p:SetAttribute("IsHammerTag", HAMMER[p.UserId] == true)
+	p:SetAttribute("IsOwnerTag", OWNER[p.UserId] == true)
 end
 
-local function applyIdentityAttributes(player)
-	player:SetAttribute("HasVIP", hasVip(player))
-	player:SetAttribute("InGroupTag", inGroup(player))
-	player:SetAttribute("HasPremiumTag", hasPremium(player))
-	player:SetAttribute("IsVerifiedTag", VERIFIED_SET[player.UserId] == true)
-	player:SetAttribute("IsHammerTag", HAMMER_SET[player.UserId] == true)
-	player:SetAttribute("IsOwnerTag", OWNER_SET[player.UserId] == true)
-end
-
-Players.PlayerAdded:Connect(function(player)
-	applyIdentityAttributes(player)
-end)
-
-for _, p in ipairs(Players:GetPlayers()) do
-	applyIdentityAttributes(p)
-end
+Players.PlayerAdded:Connect(apply)
+for _, p in ipairs(Players:GetPlayers()) do apply(p) end
 
 task.spawn(function()
 	while true do
 		for _, p in ipairs(Players:GetPlayers()) do
-			applyIdentityAttributes(p)
+			apply(p)
 		end
 		task.wait(60)
 	end
 end)
-
-if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-	TextChatService.OnIncomingMessage = function(message)
-		local props = Instance.new("TextChatMessageProperties")
-		local src = message.TextSource
-		if not src then return props end
-
-		local p = Players:GetPlayerByUserId(src.UserId)
-		if not p then return props end
-
-		local tags = {}
-
-		if p:GetAttribute("IsOwnerTag") == true then
-			table.insert(tags, "<font color='#ff5a5a'>[OWNER]</font>")
-		end
-
-		if p:GetAttribute("HasVIP") == true then
-			table.insert(tags, "<font color='#ffd24a'>[VIP]</font>")
-		elseif p:GetAttribute("InGroupTag") == true then
-			table.insert(tags, "<font color='#82dcff'>[GROUP]</font>")
-		end
-
-		if #tags > 0 then
-			props.PrefixText = table.concat(tags, " ") .. " " .. (message.PrefixText or "")
-		end
-
-		return props
-	end
-end
 
 print("[IdentityTagsService] Ready")
