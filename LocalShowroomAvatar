@@ -46,6 +46,14 @@ local function lockRig(model)
 	end
 end
 
+local function removeRigScripts(model)
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		end
+	end
+end
+
 local function getSeatOffset(displaySeat)
 	local cf = displaySeat:FindFirstChild("DummyOffset")
 	if cf and cf:IsA("CFrameValue") then
@@ -57,16 +65,17 @@ local function getSeatOffset(displaySeat)
 		return att.CFrame
 	end
 
-	-- Fixed: no 180 flip by default (your old value made them face backward)
+	-- Forward-facing default
 	return CFrame.new(0, 1.65, 0)
 end
 
 local function playSitAnimation(humanoid)
-	if not humanoid then return end
+	if not humanoid then return nil end
 
 	humanoid.AutoRotate = false
 	humanoid.Sit = true
 	humanoid:ChangeState(Enum.HumanoidStateType.Seated)
+	humanoid.HipHeight = 0
 
 	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if not animator then
@@ -74,13 +83,14 @@ local function playSitAnimation(humanoid)
 		animator.Parent = humanoid
 	end
 
-	-- Reliable R15 sit animation
 	local sitAnim = Instance.new("Animation")
-	sitAnim.AnimationId = "rbxassetid://507768133"
+	sitAnim.AnimationId = "rbxassetid://507768133" -- stable R15 sit
 	local track = animator:LoadAnimation(sitAnim)
 	track.Priority = Enum.AnimationPriority.Action
 	track.Looped = true
 	track:Play(0.1, 1, 1)
+
+	return track
 end
 
 local function createDummyForSeat(displaySeat, desc, parentFolder)
@@ -94,14 +104,14 @@ local function createDummyForSeat(displaySeat, desc, parentFolder)
 	dummy.Name = "LocalChairDummy_" .. chairModel.Name
 	dummy.Parent = parentFolder
 
+	-- Important: prevent template Animate script from overriding sit pose
+	removeRigScripts(dummy)
+
 	local humanoid = dummy:FindFirstChildOfClass("Humanoid")
 	if humanoid then
 		pcall(function()
 			humanoid:ApplyDescriptionAsync(desc)
 		end)
-		if humanoid then
-			humanoid.HipHeight = 0
-		end
 		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
 		humanoid.NameDisplayDistance = 0
@@ -118,19 +128,20 @@ local function createDummyForSeat(displaySeat, desc, parentFolder)
 	local seatOffset = getSeatOffset(displaySeat)
 	local rootTarget = displaySeat.CFrame * seatOffset
 
-	-- Keep exact rig internal offset to HRP
 	local pivotToRoot = dummy:GetPivot():ToObjectSpace(root.CFrame)
 	local targetPivot = rootTarget * pivotToRoot:Inverse()
 	dummy:PivotTo(targetPivot)
+
+	local sitTrack = playSitAnimation(humanoid)
 
 	table.insert(tracked, {
 		model = dummy,
 		seat = displaySeat,
 		seatOffset = seatOffset,
 		pivotToRoot = pivotToRoot,
+		humanoid = humanoid,
+		sitTrack = sitTrack,
 	})
-
-	playSitAnimation(humanoid)
 end
 
 local function startFollowLoop()
@@ -145,6 +156,14 @@ local function startFollowLoop()
 				local rootTarget = item.seat.CFrame * item.seatOffset
 				local targetPivot = rootTarget * item.pivotToRoot:Inverse()
 				item.model:PivotTo(targetPivot)
+
+				-- Keep seated state locked
+				if item.humanoid then
+					item.humanoid.Sit = true
+				end
+				if item.sitTrack and not item.sitTrack.IsPlaying then
+					item.sitTrack:Play(0.05, 1, 1)
+				end
 			end
 		end
 
