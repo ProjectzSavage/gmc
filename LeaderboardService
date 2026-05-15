@@ -126,7 +126,7 @@ local function getTemplateMetrics(templateFolder)
 		maxY = 32
 	end
 
-	return math.max(1, (maxY - minY) + 6)
+	return math.max(1, (maxY - minY) + 75)
 end
 
 local function applyRowData(rowFolder, rowIndex, rowHeight, entry, prefix)
