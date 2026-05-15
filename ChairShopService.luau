@@ -7,9 +7,15 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local DS = DataStoreService:GetDataStore("GMC_Chairs_V1")
 
 local GROUP_ID = 35973544
-local RAINBOW_BLOODMOON_PASS_ID = 1840862526
-local PASS_CHAIRS = { "Rainbow", "Bloodmoon" }
-
+local PASS_TO_CHAIRS = {
+	[1840862526] = { "Rainbow", "Bloodmoon" },
+	[1840721728] = { "Hacker" },
+	[1839924043] = { "Portal" },
+	-- [ANOTHER_PASS_ID] = { "AnotherChair" },
+}
+local DEV_TEST_USERS = {
+	[123456789] = true, -- replace with your own UserId
+}
 local REFRESH_INTERVAL = 30
 local SHOP_HEIGHT_OFFSET = 0.15
 local SAVE_DEBOUNCE = 10
@@ -32,15 +38,15 @@ local NotifyPlayer = ensureEvent("NotifyPlayer", "RemoteEvent")
 local RequestSync = ensureEvent("RequestSync", "RemoteFunction")
 
 local CHAIR_POOL = {
-	Common = {"Cardboard","Rusty","Metal","Sand","Joker"},
+	Common = {"Cardboard","Rusty","Metal","Sand"},
 	Uncommon = {"Rock","Grass","Ice","Candy"},
 	Rare = {"Shiny","Snow","Brick","Water","Magma","Mirror"},
 	Legendary = {"Lava","Zap","Radioactive","Angel","Demon"},
-	Secret = {"Pure","Void"},
+	Secret = {"Pure","Void", "Joker"},
 }
 
 local CHAIR_PRICES = {
-	Cardboard=200, Metal=400, Rusty=600, Sand=800, Joker=900, Grass=1000, Rock=1400,
+	Cardboard=200, Metal=400, Rusty=600, Sand=800, Joker=900000, Grass=1000, Rock=1400,
 	Brick=1800, Candy=2400, Ice=3000, Snow=4000, Shiny=5000, Mirror=6500, Magma=8000,
 	Water=7000, Zap=12000, Radioactive=16000, Lava=20000, Demon=24000, Angel=30000,
 	Pure=50000, Void=50000,
@@ -152,16 +158,27 @@ local function grantPassChairs(player)
 	local data = playerData[player.UserId]
 	if not data then return end
 
-	local ok, owns = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, RAINBOW_BLOODMOON_PASS_ID)
-	end)
-	if not ok or not owns then return end
-
 	local changed = false
-	for _, chairName in ipairs(PASS_CHAIRS) do
-		if not hasChair(data, chairName) then
-			table.insert(data.owned, chairName)
-			changed = true
+
+	for passId, chairList in pairs(PASS_TO_CHAIRS) do
+		local owns = false
+
+		if DEV_TEST_USERS[player.UserId] then
+			owns = true
+		else
+			local ok, result = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, passId)
+			end)
+			owns = ok and result
+		end
+
+		if owns then
+			for _, chairName in ipairs(chairList) do
+				if not hasChair(data, chairName) then
+					table.insert(data.owned, chairName)
+					changed = true
+				end
+			end
 		end
 	end
 
@@ -170,12 +187,21 @@ local function grantPassChairs(player)
 		syncPlayer(player)
 		NotifyPlayer:FireClient(player, {
 			title = "Gamepass Chairs",
-			message = "Rainbow + Bloodmoon unlocked",
+			message = "Pass chairs unlocked.",
 			kind = "success",
 			duration = 3,
 		})
 	end
 end
+
+-- Ensure this connection exists so newly purchased gamepasses apply quickly
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
+	if wasPurchased then
+		task.delay(1, function()
+			grantPassChairs(player)
+		end)
+	end
+end)
 
 local function grantGroupChair(player)
 	local data = playerData[player.UserId]
