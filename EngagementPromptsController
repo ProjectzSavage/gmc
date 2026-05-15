@@ -6,8 +6,8 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
 -- Edit times here
-local INVITE_DELAY = 90
-local FAVORITE_DELAY = 180
+local INVITE_DELAY = 240
+local FAVORITE_DELAY = 480
 
 local promptedInvite = false
 local promptedFavorite = false
