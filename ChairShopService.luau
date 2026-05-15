@@ -11,12 +11,13 @@ local PASS_TO_CHAIRS = {
 	[1840862526] = { "Rainbow", "Bloodmoon" },
 	[1840721728] = { "Hacker" },
 	[1839924043] = { "Portal" },
+	[1839628382] = { "VIP" },
 	-- [ANOTHER_PASS_ID] = { "AnotherChair" },
 }
 local DEV_TEST_USERS = {
-	[123456789] = true, -- replace with your own UserId
+	[3721585498] = true, -- replace with your own UserId
 }
-local REFRESH_INTERVAL = 30
+local REFRESH_INTERVAL = 21600
 local SHOP_HEIGHT_OFFSET = 0.15
 local SAVE_DEBOUNCE = 10
 local LOAD_RETRIES = 4
