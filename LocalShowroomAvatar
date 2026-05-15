@@ -1,0 +1,191 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local showcaseFolder = workspace:WaitForChild("RobuxChairShowcase")
+local rigTemplate = RS:WaitForChild("ShowroomR15Template")
+
+local tracked = {}
+local followConn = nil
+
+local function stopFollowLoop()
+	if followConn then
+		followConn:Disconnect()
+		followConn = nil
+	end
+end
+
+local function clearDummies()
+	stopFollowLoop()
+	table.clear(tracked)
+
+	local old = workspace:FindFirstChild("LocalShowroomDummies")
+	if old then
+		old:Destroy()
+	end
+end
+
+local function getPlayerDescription()
+	local ok, desc = pcall(function()
+		return Players:GetHumanoidDescriptionFromUserIdAsync(player.UserId)
+	end)
+	if ok and desc then
+		return desc
+	end
+	return Instance.new("HumanoidDescription")
+end
+
+local function lockRig(model)
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.Massless = true
+		end
+	end
+end
+
+local function getSeatOffset(displaySeat)
+	local cf = displaySeat:FindFirstChild("DummyOffset")
+	if cf and cf:IsA("CFrameValue") then
+		return cf.Value
+	end
+
+	local att = displaySeat:FindFirstChild("DummyAttachment")
+	if att and att:IsA("Attachment") then
+		return att.CFrame
+	end
+
+	-- Fixed: no 180 flip by default (your old value made them face backward)
+	return CFrame.new(0, 1.65, 0)
+end
+
+local function playSitAnimation(humanoid)
+	if not humanoid then return end
+
+	humanoid.AutoRotate = false
+	humanoid.Sit = true
+	humanoid:ChangeState(Enum.HumanoidStateType.Seated)
+
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+
+	-- Reliable R15 sit animation
+	local sitAnim = Instance.new("Animation")
+	sitAnim.AnimationId = "rbxassetid://507768133"
+	local track = animator:LoadAnimation(sitAnim)
+	track.Priority = Enum.AnimationPriority.Action
+	track.Looped = true
+	track:Play(0.1, 1, 1)
+end
+
+local function createDummyForSeat(displaySeat, desc, parentFolder)
+	if not displaySeat:IsA("Seat") then return end
+	if not displaySeat.Parent then return end
+
+	local chairModel = displaySeat:FindFirstAncestorOfClass("Model")
+	if not chairModel then return end
+
+	local dummy = rigTemplate:Clone()
+	dummy.Name = "LocalChairDummy_" .. chairModel.Name
+	dummy.Parent = parentFolder
+
+	local humanoid = dummy:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		pcall(function()
+			humanoid:ApplyDescriptionAsync(desc)
+		end)
+		if humanoid then
+			humanoid.HipHeight = 0
+		end
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+		humanoid.NameDisplayDistance = 0
+	end
+
+	local root = dummy:FindFirstChild("HumanoidRootPart", true)
+	if not root or not root:IsA("BasePart") then
+		dummy:Destroy()
+		return
+	end
+
+	lockRig(dummy)
+
+	local seatOffset = getSeatOffset(displaySeat)
+	local rootTarget = displaySeat.CFrame * seatOffset
+
+	-- Keep exact rig internal offset to HRP
+	local pivotToRoot = dummy:GetPivot():ToObjectSpace(root.CFrame)
+	local targetPivot = rootTarget * pivotToRoot:Inverse()
+	dummy:PivotTo(targetPivot)
+
+	table.insert(tracked, {
+		model = dummy,
+		seat = displaySeat,
+		seatOffset = seatOffset,
+		pivotToRoot = pivotToRoot,
+	})
+
+	playSitAnimation(humanoid)
+end
+
+local function startFollowLoop()
+	if followConn then return end
+
+	followConn = RunService.RenderStepped:Connect(function()
+		for i = #tracked, 1, -1 do
+			local item = tracked[i]
+			if not item.model.Parent or not item.seat.Parent then
+				table.remove(tracked, i)
+			else
+				local rootTarget = item.seat.CFrame * item.seatOffset
+				local targetPivot = rootTarget * item.pivotToRoot:Inverse()
+				item.model:PivotTo(targetPivot)
+			end
+		end
+
+		if #tracked == 0 then
+			stopFollowLoop()
+		end
+	end)
+end
+
+local function rebuildDummies()
+	clearDummies()
+
+	local holder = Instance.new("Folder")
+	holder.Name = "LocalShowroomDummies"
+	holder.Parent = workspace
+
+	local desc = getPlayerDescription()
+
+	for _, inst in ipairs(showcaseFolder:GetDescendants()) do
+		if inst:IsA("Seat") and inst.Name == "DisplaySeat" then
+			createDummyForSeat(inst, desc, holder)
+		end
+	end
+
+	if #tracked > 0 then
+		startFollowLoop()
+	end
+end
+
+rebuildDummies()
+
+showcaseFolder.DescendantAdded:Connect(function(inst)
+	if inst:IsA("Seat") and inst.Name == "DisplaySeat" then
+		task.wait(0.1)
+		rebuildDummies()
+	end
+end)
+
+showcaseFolder.DescendantRemoving:Connect(function(inst)
+	if inst:IsA("Seat") and inst.Name == "DisplaySeat" then
+		task.wait()
+		rebuildDummies()
+	end
+end)
