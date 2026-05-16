@@ -1,0 +1,40 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local events = RS:WaitForChild("Events")
+
+local clientReady = events:FindFirstChild("ClientReady")
+if not clientReady then
+	clientReady = Instance.new("RemoteEvent")
+	clientReady.Name = "ClientReady"
+	clientReady.Parent = events
+end
+
+local clientReadyAck = events:FindFirstChild("ClientReadyAck")
+if not clientReadyAck then
+	clientReadyAck = Instance.new("RemoteEvent")
+	clientReadyAck.Name = "ClientReadyAck"
+	clientReadyAck.Parent = events
+end
+
+local readyByUserId = {}
+
+clientReady.OnServerEvent:Connect(function(player, payload)
+	readyByUserId[player.UserId] = os.clock()
+	player:SetAttribute("ClientReady", true)
+
+	clientReadyAck:FireClient(player, {
+		ok = true,
+		serverTime = os.time(),
+		echo = payload,
+	})
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	readyByUserId[player.UserId] = nil
+end)
+
+_G.IsClientReady = function(player)
+	if not player then return false end
+	return readyByUserId[player.UserId] ~= nil
+end
