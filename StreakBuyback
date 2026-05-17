@@ -20,9 +20,9 @@ local OFFER_SECONDS = 30
 
 -- DEVPRODUCT IDS (must be productId, not passId)
 local TIERS = {
-	{ id = "small",  maxLost = 2,   productId = 3593665441, price = 9,  restorePercent = 1.00, label = "Small Save" },
-	{ id = "medium", maxLost = 8,   productId = 3593665744, price = 29, restorePercent = 1.00, label = "Medium Save" },
-	{ id = "large",  maxLost = 999, productId = 3593666030, price = 99, restorePercent = 1.00, label = "Large Save" },
+	{ id = "small",  maxLost = 2,   productId = 3594144743, price = 9,  restorePercent = 1.00, label = "Small Save" },
+	{ id = "medium", maxLost = 8,   productId = 3594144923, price = 29, restorePercent = 1.00, label = "Medium Save" },
+	{ id = "large",  maxLost = 999, productId = 3594145066, price = 99, restorePercent = 1.00, label = "Large Save" },
 }
 
 local PRODUCT_TO_TIER = {}
