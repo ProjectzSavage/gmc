@@ -2,27 +2,35 @@ local RS = game:GetService("ReplicatedStorage")
 
 local shopChairs = RS:WaitForChild("Chairs"):WaitForChild("ShopChairs")
 
-local CHAIR_PRICES = {
-	Cardboard = 200, Metal = 400, Rusty = 600, Sand = 800, Joker = 900000,
-	Grass = 1000, Rock = 1400, Brick = 1800, Candy = 2400, Ice = 3000,
-	Snow = 4000, Shiny = 5000, Mirror = 6500, Water = 7000, Magma = 8000,
-	Zap = 12000, Radioactive = 16000, Lava = 20000, Demon = 24000, Angel = 30000,
-	Pure = 50000, Void = 50000,
+local FALLBACK_PRICES = {
+	Cardboard=200, Metal=400, Rusty=600, Sand=800, Joker=900, Grass=1000, Rock=1400,
+	Brick=1800, Candy=2400, Ice=3000, Snow=4000, Shiny=5000, Mirror=6500, Water=7000,
+	Magma=8000, Zap=12000, Radioactive=16000, Lava=20000, Demon=24000, Angel=30000,
+	Pure=50000, Void=50000,
 }
 
 local EXCLUDE = {
 	Joker = true,
 }
 
+local function getPrices()
+	return (_G.CHAIR_PRICES and type(_G.CHAIR_PRICES) == "table") and _G.CHAIR_PRICES or FALLBACK_PRICES
+end
+
 local function updateChairLabel(chairModel)
 	if not chairModel or not chairModel:IsA("Model") then return end
 	if EXCLUDE[chairModel.Name] then return end
 
-	local price = CHAIR_PRICES[chairModel.Name]
-	if not price then return end
+	local prices = getPrices()
+	local price = prices[chairModel.Name]
+	if not price then
+		warn("[ShopChairLabelSync] Missing price for:", chairModel.Name)
+		return
+	end
 
 	local ownedLbl = chairModel:FindFirstChild("OwnedLbl", true)
 	if not ownedLbl or not ownedLbl:IsA("TextLabel") then
+		warn("[ShopChairLabelSync] Missing OwnedLbl for:", chairModel.Name)
 		return
 	end
 
