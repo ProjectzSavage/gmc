@@ -1,0 +1,182 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local gameGui = playerGui:WaitForChild("GameGui")
+local events = RS:WaitForChild("Events")
+
+local PlayerSat = events:WaitForChild("PlayerSat")
+local PlayerStood = events:WaitForChild("PlayerStood")
+local TableCountdown = events:WaitForChild("TableCountdown")
+local BotTableCountdown = events:WaitForChild("BotTableCountdown")
+local RequestStand = events:WaitForChild("RequestStand")
+local ResetAll = events:WaitForChild("ResetAll")
+local GameOver = events:WaitForChild("GameOver")
+
+local function parseTableId(raw)
+	local s = tostring(raw or "")
+	if s == "" then return nil end
+	if s:sub(1, 4) == "BOT:" then
+		return s:sub(5)
+	end
+	return s
+end
+
+-- state
+local iAmSeated = false
+local myTableId = nil
+local myTableSeatNames = { A = nil, B = nil }
+local myTablePlayerCount = 0
+local roundLocked = false
+
+local function recalcCount()
+	local c = 0
+	if myTableSeatNames.A then c += 1 end
+	if myTableSeatNames.B then c += 1 end
+	myTablePlayerCount = c
+end
+
+-- UI
+local btn = Instance.new("TextButton")
+btn.Name = "LeaveSeatBtn"
+btn.AnchorPoint = Vector2.new(0.5, 1)
+btn.Size = UDim2.new(0.09, 0, 0.065, 0)
+btn.Position = UDim2.new(0.5, 0, 0.97, 0)
+btn.BackgroundColor3 = Color3.fromRGB(235, 90, 90)
+btn.TextColor3 = Color3.new(1, 1, 1)
+btn.Text = "Leave Seat"
+btn.Font = Enum.Font.GothamBold
+btn.TextScaled = true
+btn.Visible = false
+btn.ZIndex = 1000
+btn.AutoButtonColor = true
+btn.Parent = gameGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = btn
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 1.5
+stroke.Color = Color3.fromRGB(120, 35, 35)
+stroke.Parent = btn
+
+local function updateButton()
+	-- show only when seated, table not full (1/2), and round not started
+	btn.Visible = iAmSeated and (myTablePlayerCount < 2) and (not roundLocked)
+end
+
+btn.Activated:Connect(function()
+	if btn.Visible then
+		RequestStand:FireServer()
+	end
+end)
+
+PlayerSat.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	if name == player.Name then
+		iAmSeated = true
+		roundLocked = false
+		myTableId = tableId
+		myTableSeatNames = { A = nil, B = nil }
+	end
+
+	if myTableId and tableId ~= myTableId then
+		return
+	end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = name
+	end
+
+	recalcCount()
+	updateButton()
+end)
+
+PlayerStood.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	if myTableId and tableId ~= myTableId then
+		return
+	end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = nil
+	end
+
+	recalcCount()
+
+	if name == player.Name then
+		iAmSeated = false
+		myTableId = nil
+		myTableSeatNames = { A = nil, B = nil }
+		myTablePlayerCount = 0
+		roundLocked = false
+	end
+
+	updateButton()
+end)
+
+TableCountdown.OnClientEvent:Connect(function(a, b)
+	local tableId, t
+	if b == nil then
+		tableId = myTableId
+		t = a
+	else
+		tableId = tostring(a)
+		t = b
+	end
+
+	if myTableId and tableId and tableId ~= myTableId then
+		return
+	end
+
+	local n = tonumber(t)
+	if n and n > 0 then
+		roundLocked = false
+	else
+		-- countdown finished => round started
+		roundLocked = true
+	end
+	updateButton()
+end)
+
+BotTableCountdown.OnClientEvent:Connect(function(rawTableId, t)
+	local tableId = parseTableId(rawTableId)
+	if myTableId and tableId ~= myTableId then
+		return
+	end
+
+	local n = tonumber(t)
+	if n and n > 0 then
+		roundLocked = false
+	else
+		roundLocked = true
+	end
+	updateButton()
+end)
+
+ResetAll.OnClientEvent:Connect(function()
+	iAmSeated = false
+	myTableId = nil
+	myTableSeatNames = { A = nil, B = nil }
+	myTablePlayerCount = 0
+	roundLocked = false
+	updateButton()
+end)
+
+GameOver.OnClientEvent:Connect(function()
+	roundLocked = false
+	updateButton()
+end)
+
+player.CharacterAdded:Connect(function()
+	iAmSeated = false
+	myTableId = nil
+	myTableSeatNames = { A = nil, B = nil }
+	myTablePlayerCount = 0
+	roundLocked = false
+	updateButton()
+end)
