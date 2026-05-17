@@ -46,7 +46,40 @@ local CFG = {
 	RESPONSE_DISPLAY_TIME = 1.6,
 	SWITCH_DELAY = 0.8,
 }
+local BOT_REWARDS = {
+	Cash = 200,
+	Wins = 1,
+	Winstreak = 1,
+}
 
+local function awardBotWin(player)
+	if not player then return end
+	local stats = player:FindFirstChild("leaderstats")
+	if not stats then return end
+
+	local cash = stats:FindFirstChild("Cash")
+	local wins = stats:FindFirstChild("Wins")
+	local streak = stats:FindFirstChild("Winstreak")
+
+	if cash and cash:IsA("IntValue") then
+		cash.Value += BOT_REWARDS.Cash
+	end
+	if wins and wins:IsA("IntValue") then
+		wins.Value += BOT_REWARDS.Wins
+	end
+	if streak and streak:IsA("IntValue") then
+		streak.Value += BOT_REWARDS.Winstreak
+	end
+end
+
+local function resetStreak(player)
+	if not player then return end
+	local stats = player:FindFirstChild("leaderstats")
+	local streak = stats and stats:FindFirstChild("Winstreak")
+	if streak and streak:IsA("IntValue") then
+		streak.Value = 0
+	end
+end
 local sessions = {}
 local playerToTable = {}
 
@@ -162,6 +195,11 @@ local function endSession(tableId, winnerName, reason)
 	clearTableStatus(tableId)
 
 	local playerWon = (winnerName == session.player.Name)
+	if playerWon then
+		awardBotWin(session.player)
+	else
+		resetStreak(session.player)
+	end
 	botSpeak(tableId, playerWon and "You win!" or "Bot wins!")
 
 	E.GameOver:FireClient(session.player, {
