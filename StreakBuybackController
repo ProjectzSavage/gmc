@@ -1,0 +1,67 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+local events = RS:WaitForChild("Events")
+
+local StreakLostPrompt = events:WaitForChild("StreakLostPrompt")
+local StreakBuybackResult = events:WaitForChild("StreakBuybackResult")
+
+local root = gameGui:WaitForChild("StreakSaveF")
+local titleLbl = root:WaitForChild("TitleLbl")
+local subtitleLbl = root:WaitForChild("SubtitleLbl")
+local tierLbl = root:WaitForChild("TierLbl")
+local priceLbl = root:WaitForChild("PriceLbl")
+local countdownLbl = root:WaitForChild("CountdownLbl")
+local buyBtn = root:WaitForChild("BuyBtn")
+local closeBtn = root:WaitForChild("CloseBtn")
+
+root.Visible = false
+
+local activeProductId = 0
+local activeExpiresAt = 0
+local activeLost = 0
+
+StreakLostPrompt.OnClientEvent:Connect(function(payload)
+	if type(payload) ~= "table" then return end
+
+	activeProductId = tonumber(payload.productId) or 0
+	activeExpiresAt = tonumber(payload.expiresAt) or 0
+	activeLost = tonumber(payload.lost) or 0
+
+	titleLbl.Text = "You Lost Your Streak!"
+	subtitleLbl.Text = "Buy it back before it expires"
+	tierLbl.Text = tostring(payload.tierName or "Streak Save") .. " (Lost: " .. tostring(activeLost) .. ")"
+	priceLbl.Text = "R$ " .. tostring(payload.price or "?")
+
+	root.Visible = true
+end)
+
+buyBtn.Activated:Connect(function()
+	if activeProductId > 0 then
+		MarketplaceService:PromptProductPurchase(player, activeProductId)
+	end
+end)
+
+closeBtn.Activated:Connect(function()
+	root.Visible = false
+end)
+
+StreakBuybackResult.OnClientEvent:Connect(function(payload)
+	if type(payload) ~= "table" then return end
+	if payload.action == "consumed" or payload.action == "expired" then
+		root.Visible = false
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not root.Visible then return end
+	local left = math.max(0, activeExpiresAt - os.time())
+	countdownLbl.Text = string.format("%02d:%02d", math.floor(left / 60), left % 60)
+	if left <= 0 then
+		root.Visible = false
+	end
+end)
