@@ -1,4 +1,4 @@
--- ClientHandler - Original + fixes
+-- ClientHandler v2
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
@@ -6,10 +6,7 @@ local CAS = game:GetService("ContextActionService")
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
-while not _G.Frames do
-	task.wait(0.1)
-end
-
+while not _G.Frames do task.wait(0.1) end
 local F = _G.Frames
 
 local Events = RS:WaitForChild("Events", 15)
@@ -23,45 +20,86 @@ for _, n in ipairs({
 	"ShowWait", "ShowBillboard", "TimerTick",
 	"RoundOver", "GameOver", "ResetAll",
 	"RequestSit", "RequestStand", "TableCountdown",
-	"BotTableCountdown", -- add this
+	"BotTableCountdown",
 	}) do
 	E[n] = Events:WaitForChild(n, 10)
 end
 
 local CountryData = { ByLetter = {} }
 do
-	local ok, mod = pcall(function()
-		return require(RS:WaitForChild("CountryData"))
-	end)
+	local ok, mod = pcall(function() return require(RS:WaitForChild("CountryData")) end)
 	if ok and type(mod) == "table" then
 		CountryData = mod
 		CountryData.ByLetter = CountryData.ByLetter or {}
 	else
-		warn("[CH] CountryData failed to load:", mod)
+		warn("[CH] CountryData failed:", mod)
 	end
 end
 
+-- ── State ──────────────────────────────────────────────────────
 local myElimMin = 0
 local myElimMax = 27
 local myWrong = {}
-local playerCount = 0
 local iAmSeated = false
 local mySlot = nil
-local countdownDone = false
-local pendingShowLetterPick = false
-local seatNames = { A = nil, B = nil }
-local roundJumpLocked = false -- lock starts when countdown starts, stays locked during match
 local myTableId = nil
 local myTableSeatNames = { A = nil, B = nil }
 local myTablePlayerCount = 0
+local countdownDone = false
+local pendingShowLetterPick = false
+local seatedAt = 0
+local lastStandRequestAt = 0
 
-local function parseTableId(raw)
-	local s = tostring(raw or "")
-	if s == "" then return nil end
-	if string.sub(s, 1, 4) == "BOT:" then
-		return string.sub(s, 5)
+-- ── Jump lock ──────────────────────────────────────────────────
+-- roundJumpLocked = true means game is active, jumping should stand you up
+-- but ONLY if the table has 2 players. At 1/2 jump is always free.
+local roundJumpLocked = false
+local JUMP_LOCK_ACTION = "RoundJumpLock"
+local jumpBound = false
+
+local function setJumpLock(locked)
+	roundJumpLocked = (locked == true)
+
+	if roundJumpLocked then
+		-- Bind only when actually locking
+		if not jumpBound then
+			CAS:BindActionAtPriority(
+				JUMP_LOCK_ACTION,
+				function(_, state)
+					-- Sink jump entirely during a live round (2/2)
+					if state == Enum.UserInputState.Begin then
+						return Enum.ContextActionResult.Sink
+					end
+					return Enum.ContextActionResult.Pass
+				end,
+				false, 3000,
+				Enum.PlayerActions.CharacterJump
+			)
+			jumpBound = true
+		end
+	else
+		-- Unbind when unlocking — jump is fully free
+		if jumpBound then
+			CAS:UnbindAction(JUMP_LOCK_ACTION)
+			jumpBound = false
+		end
 	end
-	return s
+
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	if roundJumpLocked then
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+		hum.Jump = false
+	else
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+		hum.JumpPower = 50
+		hum.JumpHeight = 7.2
+	end
 end
 
 local function recalcMyTableCount()
@@ -69,53 +107,174 @@ local function recalcMyTableCount()
 	if myTableSeatNames.A then c += 1 end
 	if myTableSeatNames.B then c += 1 end
 	myTablePlayerCount = c
-
-	-- If table drops below 2 players, never keep jump locked.
+	-- Drop below 2: always unlock jump
 	if myTablePlayerCount < 2 then
-		roundJumpLocked = false
+		setJumpLock(false)
 	end
 end
-local LETTER_UI = {
-	CellSize = 72, CellPadding = 6, MaxCells = 8, Radius = 10,
-	StrokeThickness = 2, StrokeColor = Color3.fromRGB(120,165,255),
-	TextSize = 20, Font = Enum.Font.GothamBold, TextStrokeTransparency = 0.18,
-	TextStrokeColor = Color3.fromRGB(6,10,24),
-	BaseColor = Color3.fromRGB(255,255,255), HoverColor = Color3.fromRGB(60,120,255),
-	DisabledColor = Color3.fromRGB(38,38,48), DisabledTextColor = Color3.fromRGB(65,65,75),
-}
 
+local function forceUnlockRoundState()
+	countdownDone = false
+	pendingShowLetterPick = false
+	setJumpLock(false)
+	if _G.ReleaseCamera then _G.ReleaseCamera() end
+end
+
+-- ── Stand from jump ────────────────────────────────────────────
+-- Jump = stand up, but ONLY when:
+--   • seated
+--   • NOT round locked (i.e. game not active / 1/2)
+--   • cooldown passed
+-- Mobile and PC treated identically here — no special casing
+local function tryStandFromJump()
+	if not iAmSeated then return end
+	if roundJumpLocked then return end  -- game active: jump is suppressed by CAS, not stand
+	if os.clock() - seatedAt < 0.6 then return end  -- anti-accidental
+	local now = os.clock()
+	if now - lastStandRequestAt < 0.3 then return end
+	lastStandRequestAt = now
+	E.RequestStand:FireServer()
+end
+
+-- PC: space / gamepad A
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if not iAmSeated then return end
+	if input.UserInputType == Enum.UserInputType.Keyboard
+		and input.KeyCode == Enum.KeyCode.Space then
+		tryStandFromJump()
+	elseif input.UserInputType == Enum.UserInputType.Gamepad1
+		and input.KeyCode == Enum.KeyCode.ButtonA then
+		tryStandFromJump()
+	end
+end)
+
+-- Mobile + fallback via JumpRequest
+UIS.JumpRequest:Connect(function()
+	tryStandFromJump()
+end)
+
+-- ── UI helpers ─────────────────────────────────────────────────
+local LETTER_UI = {
+	CellSize=72, CellPadding=6, MaxCells=8, Radius=10,
+	StrokeThickness=2, StrokeColor=Color3.fromRGB(120,165,255),
+	TextSize=20, Font=Enum.Font.GothamBold, TextStrokeTransparency=0.18,
+	TextStrokeColor=Color3.fromRGB(6,10,24),
+	BaseColor=Color3.fromRGB(255,255,255), HoverColor=Color3.fromRGB(60,120,255),
+	DisabledColor=Color3.fromRGB(38,38,48), DisabledTextColor=Color3.fromRGB(65,65,75),
+}
 local COUNTRY_UI = {
-	RowHeight = 52, RowGap = 6, RowInset = 6, Radius = 8,
-	StrokeThickness = 2, StrokeColor = Color3.fromRGB(95,135,220),
-	TextSize = 15, Font = Enum.Font.Gotham, TextStrokeTransparency = 0.2,
-	TextStrokeColor = Color3.fromRGB(4,8,20),
-	BaseColor = Color3.fromRGB(2,187,190), HoverColor = Color3.fromRGB(40,90,180),
-	TextColor = Color3.fromRGB(230,235,255),
-	WrongColor = Color3.fromRGB(100,25,25), WrongTextColor = Color3.fromRGB(180,70,70),
+	RowHeight=52, RowGap=6, RowInset=6, Radius=8,
+	StrokeThickness=2, StrokeColor=Color3.fromRGB(95,135,220),
+	TextSize=15, Font=Enum.Font.Gotham, TextStrokeTransparency=0.2,
+	TextStrokeColor=Color3.fromRGB(4,8,20),
+	BaseColor=Color3.fromRGB(2,187,190), HoverColor=Color3.fromRGB(40,90,180),
+	TextColor=Color3.fromRGB(230,235,255),
+	WrongColor=Color3.fromRGB(100,25,25), WrongTextColor=Color3.fromRGB(180,70,70),
 }
 
 local function setVisible(o, v) if o then o.Visible = v end end
 local function setText(l, v) if l and l:IsA("TextLabel") then l.Text = v end end
 local function hideAll()
-	setVisible(F.LPickF,false); setVisible(F.CPickF,false); setVisible(F.LGuessF,false)
-	setVisible(F.CGuessF,false); setVisible(F.WaitF,false); setVisible(F.ResultF,false)
+	setVisible(F.LPickF,false); setVisible(F.CPickF,false)
+	setVisible(F.LGuessF,false); setVisible(F.CGuessF,false)
+	setVisible(F.WaitF,false); setVisible(F.ResultF,false)
 	setVisible(F.GameOverF,false)
 end
 local function clear(p)
 	if not p then return end
 	for _, c in ipairs(p:GetChildren()) do
-		if not c:IsA("UIGridLayout") and not c:IsA("UIListLayout") and not c:IsA("UICorner") and not c:IsA("UIStroke") then c:Destroy() end
+		if not c:IsA("UIGridLayout") and not c:IsA("UIListLayout")
+			and not c:IsA("UICorner") and not c:IsA("UIStroke") then
+			c:Destroy()
+		end
 	end
 end
-local function disableAll(p) if not p then return end for _, b in ipairs(p:GetChildren()) do if b:IsA("TextButton") then b.Active = false end end end
-local function mkCorner(r, p) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); c.Parent = p end
-local function isWrong(n) for _, w in ipairs(myWrong) do if string.lower(w) == string.lower(n) then return true end end; return false end
-local function colorFromName(c) local m = {green=Color3.fromRGB(80,255,100),red=Color3.fromRGB(255,60,60),yellow=Color3.fromRGB(255,210,0),white=Color3.fromRGB(255,255,255)}; return m[c] or m.white end
-local function getOtherSlot() return mySlot == "A" and "B" or mySlot == "B" and "A" or nil end
-local function getSlotByName(n) return (seatNames.A == n and "A") or (seatNames.B == n and "B") end
-local function setGuessingOverlay(t) if F.BlurOverlay then F.BlurOverlay.Visible = true end; if F.GuessingLbl then F.GuessingLbl.Text = t or ""; F.GuessingLbl.TextTransparency = t and 0 or 1 end end
-local function hideGuessingOverlay() if F.GuessingLbl then F.GuessingLbl.Text = ""; F.GuessingLbl.TextTransparency = 1 end end
+local function disableAll(p)
+	if not p then return end
+	for _, b in ipairs(p:GetChildren()) do
+		if b:IsA("TextButton") then b.Active = false end
+	end
+end
+local function mkCorner(r, p)
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,r); c.Parent = p
+end
+local function isWrong(n)
+	for _, w in ipairs(myWrong) do
+		if string.lower(w) == string.lower(n) then return true end
+	end
+	return false
+end
+local function colorFromName(c)
+	local m = {
+		green=Color3.fromRGB(80,255,100), red=Color3.fromRGB(255,60,60),
+		yellow=Color3.fromRGB(255,210,0), white=Color3.fromRGB(255,255,255)
+	}
+	return m[c] or m.white
+end
+local function getOtherSlot()
+	return mySlot == "A" and "B" or mySlot == "B" and "A" or nil
+end
+local function getSlotByName(n)
+	return (myTableSeatNames.A == n and "A") or (myTableSeatNames.B == n and "B")
+end
+local function setGuessingOverlay(t)
+	if F.BlurOverlay then F.BlurOverlay.Visible = true end
+	if F.GuessingLbl then
+		F.GuessingLbl.Text = t or ""
+		F.GuessingLbl.TextTransparency = t and 0 or 1
+	end
+end
+local function hideGuessingOverlay()
+	if F.GuessingLbl then
+		F.GuessingLbl.Text = ""
+		F.GuessingLbl.TextTransparency = 1
+	end
+end
+local function hardUnlockMovementAndCamera()
+	setJumpLock(false)
+	hideGuessingOverlay()
+	if _G.ReleaseCamera then _G.ReleaseCamera() end
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+		hum.JumpPower = 50
+		hum.JumpHeight = 7.2
+	end
+end
+local getSeatSnapshotRF = Events:FindFirstChild("GetSeatSnapshot")
 
+local function syncMyTableCountFromSnapshot()
+	if not myTableId then return end
+	if not getSeatSnapshotRF or not getSeatSnapshotRF:IsA("RemoteFunction") then return end
+
+	local ok, snap = pcall(function()
+		return getSeatSnapshotRF:InvokeServer()
+	end)
+	if not ok or type(snap) ~= "table" then return end
+
+	local count = nil
+	if _G.ActiveBotTableId or tostring(myTableId):sub(1,4) == "BOT:" then
+		local id = tostring(myTableId):gsub("^BOT:", "")
+		count = snap.botTables and snap.botTables[id]
+	else
+		count = snap.tables and snap.tables[myTableId]
+	end
+
+	myTablePlayerCount = tonumber(count) or myTablePlayerCount
+	setText(F.HUDStatus, tostring(myTablePlayerCount) .. " / 2 seated")
+end
+local function parseTableId(raw)
+	local s = tostring(raw or "")
+	if s == "" then return nil end
+	if string.sub(s, 1, 4) == "BOT:" then return string.sub(s, 5) end
+	return s
+end
+
+-- ── Letter / Country UI builders ──────────────────────────────
 local function ensureLetterGridLayout(grid)
 	local layout = grid:FindFirstChildOfClass("UIGridLayout")
 	if not layout then layout = Instance.new("UIGridLayout"); layout.Parent = grid end
@@ -131,14 +290,21 @@ end
 
 local function mergeCountryLists(localList, serverList)
 	local merged, seen = {}, {}
-	local function addAll(list) if type(list)~="table" then return end for _, c in ipairs(list) do local key = c and c.name and string.lower(c.name) if key and not seen[key] then seen[key]=true; table.insert(merged,c) end end end
-	addAll(localList); addAll(serverList); return merged
+	local function addAll(list)
+		if type(list) ~= "table" then return end
+		for _, c in ipairs(list) do
+			local key = c and c.name and string.lower(c.name)
+			if key and not seen[key] then seen[key]=true; table.insert(merged,c) end
+		end
+	end
+	addAll(localList); addAll(serverList)
+	return merged
 end
 
 local function debugCountryList(tag, letter, serverList, localList, finalList)
-	local s = type(serverList) == "table" and serverList or {}
-	local l = type(localList) == "table" and localList or {}
-	local f = type(finalList) == "table" and finalList or {}
+	local s = type(serverList)=="table" and serverList or {}
+	local l = type(localList)=="table" and localList or {}
+	local f = type(finalList)=="table" and finalList or {}
 	print(string.format("[CH][%s] letter=%s server=%d local=%d final=%d", tag, tostring(letter), #s, #l, #f))
 end
 
@@ -146,11 +312,10 @@ local function buildLetterGrid(grid, onPick)
 	ensureLetterGridLayout(grid)
 	clear(grid)
 	for i = 1, 26 do
-		local letter = string.char(64 + i)
+		local letter = string.char(64+i)
 		local list = CountryData.ByLetter[letter]
-		local hasData = type(list) == "table" and #list > 0
+		local hasData = type(list)=="table" and #list > 0
 		local base = hasData and LETTER_UI.BaseColor or LETTER_UI.DisabledColor
-		local hover = LETTER_UI.HoverColor
 		local btn = Instance.new("TextButton")
 		btn.Name = "L_"..letter
 		btn.Size = UDim2.fromOffset(LETTER_UI.CellSize, LETTER_UI.CellSize)
@@ -161,11 +326,17 @@ local function buildLetterGrid(grid, onPick)
 		btn.TextStrokeColor3 = LETTER_UI.TextStrokeColor
 		btn.Text = letter; btn.AutoButtonColor = false; btn.Active = hasData; btn.Parent = grid
 		mkCorner(LETTER_UI.Radius, btn)
-		local stroke = Instance.new("UIStroke"); stroke.Thickness = LETTER_UI.StrokeThickness; stroke.Color = hasData and LETTER_UI.StrokeColor or Color3.fromRGB(55,60,75); stroke.Parent = btn
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = LETTER_UI.StrokeThickness
+		stroke.Color = hasData and LETTER_UI.StrokeColor or Color3.fromRGB(55,60,75)
+		stroke.Parent = btn
 		if hasData then
-			btn.MouseEnter:Connect(function() if btn.Active then btn.BackgroundColor3 = hover end end)
+			btn.MouseEnter:Connect(function() if btn.Active then btn.BackgroundColor3 = LETTER_UI.HoverColor end end)
 			btn.MouseLeave:Connect(function() if btn.Active then btn.BackgroundColor3 = base end end)
-			btn.MouseButton1Click:Connect(function() if not btn.Active then return end; disableAll(grid); onPick(letter) end)
+			btn.MouseButton1Click:Connect(function()
+				if not btn.Active then return end
+				disableAll(grid); onPick(letter)
+			end)
 		end
 	end
 end
@@ -173,12 +344,11 @@ end
 local function applyElim(grid, eMin, eMax)
 	local minN = tonumber(eMin) or 0
 	local maxN = tonumber(eMax) or 27
-
 	for i = 1, 26 do
-		local b = grid:FindFirstChild("L_" .. string.char(64 + i))
+		local b = grid:FindFirstChild("L_"..string.char(64+i))
 		if b and (i <= minN or i >= maxN) then
-			b.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
-			b.TextColor3 = Color3.fromRGB(62, 62, 72)
+			b.BackgroundColor3 = Color3.fromRGB(42,42,52)
+			b.TextColor3 = Color3.fromRGB(62,62,72)
 			b.TextStrokeTransparency = 1
 			b.Active = false
 			local st = b:FindFirstChildOfClass("UIStroke")
@@ -188,7 +358,9 @@ local function applyElim(grid, eMin, eMax)
 end
 
 local function buildCountryList(scroll, countries, onPick, debugTag)
-	for _, child in ipairs(scroll:GetChildren()) do if child:IsA("UIListLayout") or child:IsA("UIGridLayout") then child:Destroy() end end
+	for _, child in ipairs(scroll:GetChildren()) do
+		if child:IsA("UIListLayout") or child:IsA("UIGridLayout") then child:Destroy() end
+	end
 	clear(scroll)
 	local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280,720)
 	local mobile = vp.X <= 900
@@ -217,14 +389,17 @@ local function buildCountryList(scroll, countries, onPick, debugTag)
 		btn.TextWrapped = false; btn.TextTruncate = Enum.TextTruncate.AtEnd
 		btn.AutoButtonColor = false; btn.Active = true; btn.Parent = scroll
 		mkCorner(COUNTRY_UI.Radius, btn)
-		local stroke = Instance.new("UIStroke"); stroke.Thickness = COUNTRY_UI.StrokeThickness; stroke.Color = COUNTRY_UI.StrokeColor; stroke.Parent = btn
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = COUNTRY_UI.StrokeThickness
+		stroke.Color = COUNTRY_UI.StrokeColor
+		stroke.Parent = btn
 		btn.MouseEnter:Connect(function() if btn.Active then btn.BackgroundColor3 = COUNTRY_UI.HoverColor end end)
 		btn.MouseLeave:Connect(function() if btn.Active then btn.BackgroundColor3 = COUNTRY_UI.BaseColor end end)
 		btn.MouseButton1Click:Connect(function() if not btn.Active then return end; onPick(c.name) end)
 		y += rowH + gap
 	end
 	print("[CH]["..debugTag.."] options count =", #countries)
-	scroll.CanvasSize = UDim2.new(0, 0, 0, y + 6)
+	scroll.CanvasSize = UDim2.new(0,0,0, y+6)
 end
 
 local function openLetterPick()
@@ -238,77 +413,67 @@ local function openLetterPick()
 	end)
 end
 
-local function getClosestTableModel()
-	local folder = workspace:WaitForChild("Tables")
-	local character = player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	if not hrp then
-		return folder:FindFirstChildWhichIsA("Model")
+-- ── Event handlers ─────────────────────────────────────────────
+E.PlayerSat.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	if name == player.Name then
+		seatedAt = os.clock()
+		lastStandRequestAt = 0
+		iAmSeated = true
+		setJumpLock(false)  -- 1/2: jump is free
+		mySlot = slot
+		myTableId = tableId
+		task.defer(syncMyTableCountFromSnapshot)
+		myTableSeatNames = { A = nil, B = nil }
+		countdownDone = false
+		pendingShowLetterPick = false
 	end
 
-	local best, bestDist = nil, math.huge
-	for _, model in ipairs(folder:GetChildren()) do
-		if model:IsA("Model") then
-			local top = model:FindFirstChild("TableTop")
-			if top and top:IsA("BasePart") then
-				local d = (top.Position - hrp.Position).Magnitude
-				if d < bestDist then
-					bestDist = d
-					best = model
-				end
-			end
-		end
+	if myTableId and tableId ~= myTableId then return end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = name
 	end
-	return best
-end
 
-local CAS = game:GetService("ContextActionService")
+	recalcMyTableCount()
+	setText(F.HUDSeat1, "A: "..tostring(myTableSeatNames.A or "Empty"))
+	setText(F.HUDSeat2, "B: "..tostring(myTableSeatNames.B or "Empty"))
+	setText(F.HUDStatus, tostring(myTablePlayerCount).." / 2 seated")
 
-local lastStandRequestAt = 0
-local function tryStandFromJump()
-	if not iAmSeated then return end
-	if roundJumpLocked then return end
-
-	-- tiny client debounce so we do not spam server
-	local now = os.clock()
-	if now - lastStandRequestAt < 0.15 then return end
-	lastStandRequestAt = now
-
-	E.RequestStand:FireServer()
-end
-
--- Works on many clients/devices
-UIS.JumpRequest:Connect(function()
-	tryStandFromJump()
+	if name == player.Name and _G.GoWideShot then _G.GoWideShot(1.0) end
 end)
 
--- PC fallback: Space / gamepad A even if JumpRequest does not fire while seated
-UIS.InputBegan:Connect(function(input, gameProcessed)
-	if not iAmSeated then return end
-	if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
-		tryStandFromJump()
-	elseif input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == Enum.KeyCode.ButtonA then
-		tryStandFromJump()
+E.PlayerStood.OnClientEvent:Connect(function(slot, name, rawTableId)
+	local tableId = parseTableId(rawTableId)
+
+	if myTableId and tableId ~= myTableId then return end
+
+	if slot == "A" or slot == "B" then
+		myTableSeatNames[slot] = nil
 	end
-end)
 
--- Mobile + Roblox jump action path
-CAS:BindAction("SeatJumpLeave", function(_, inputState)
-	if inputState == Enum.UserInputState.Begin then
-		tryStandFromJump()
+	recalcMyTableCount()
+
+	if iAmSeated and myTablePlayerCount < 2 then
+		forceUnlockRoundState()
+		setText(F.HUDStatus, tostring(myTablePlayerCount).." / 2 seated")
 	end
-	return Enum.ContextActionResult.Pass
-end, false, Enum.PlayerActions.CharacterJump)
 
--- ALL event handlers now guard: `if not iAmSeated then return end`
-
-E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName)
-	if not iAmSeated then return end
-	local tp = Players:FindFirstChild(targetName)
-	if tp and _G.ShowHeadBB then _G.ShowHeadBB(tp, text, colorFromName(colorName)) end
-	if tostring(text) == "Guessing" then return end
-	hideGuessingOverlay()
-	if _G.GoWideShot then _G.GoWideShot(0.45) end
+	if name == player.Name then
+		iAmSeated = false
+		mySlot = nil
+		myTableId = nil
+		myTableSeatNames = { A = nil, B = nil }
+		myTablePlayerCount = 0
+		countdownDone = false
+		pendingShowLetterPick = false
+		myElimMin = 0; myElimMax = 27; myWrong = {}
+		setJumpLock(false)
+		hideGuessingOverlay(); hideAll()
+		setText(F.HUDStatus, "Walk up and press E to sit")
+		if _G.ReleaseCamera then _G.ReleaseCamera() end
+	end
 end)
 
 E.TableCountdown.OnClientEvent:Connect(function(a, b)
@@ -320,24 +485,26 @@ E.TableCountdown.OnClientEvent:Connect(function(a, b)
 		tableId = tostring(a)
 		t = b
 	end
-
 	if myTableId and tableId and tableId ~= myTableId then return end
 
 	local n = tonumber(t)
 	if n and n > 0 then
-		-- Countdown phase: allow jump/stand
 		countdownDone = false
-		roundJumpLocked = false
+		setJumpLock(false)
 		hideAll()
 		return
 	end
 
-	-- Countdown finished -> game starts: lock jump
-	countdownDone = true
-	roundJumpLocked = true
-	if pendingShowLetterPick then
-		pendingShowLetterPick = false
-		openLetterPick()
+	-- Countdown finished: if I am seated at this table, lock jump for round start
+	if iAmSeated then
+		countdownDone = true
+		setJumpLock(true)
+		if pendingShowLetterPick then
+			pendingShowLetterPick = false
+			openLetterPick()
+		end
+	else
+		forceUnlockRoundState()
 	end
 end)
 
@@ -347,90 +514,31 @@ E.BotTableCountdown.OnClientEvent:Connect(function(rawTableId, t)
 
 	local n = tonumber(t)
 	if n and n > 0 then
-		-- Countdown phase: allow jump/stand
 		countdownDone = false
-		roundJumpLocked = false
+		setJumpLock(false)
 		hideAll()
 		return
 	end
 
-	-- Countdown finished -> game starts: lock jump
-	countdownDone = true
-	roundJumpLocked = true
-	if pendingShowLetterPick then
-		pendingShowLetterPick = false
-		openLetterPick()
-	end
-end)
-E.PlayerSat.OnClientEvent:Connect(function(slot, name, rawTableId)
-	local tableId = parseTableId(rawTableId)
-
-	-- If this event is me sitting, bind my table context
-	if name == player.Name then
-		iAmSeated = true
-		roundJumpLocked = false
-		mySlot = slot
-		myTableId = tableId
-		myTableSeatNames = { A = nil, B = nil }
-		countdownDone = false
-		pendingShowLetterPick = false
-	end
-
-	-- Ignore other tables
-	if myTableId and tableId ~= myTableId then
-		return
-	end
-
-	if slot == "A" or slot == "B" then
-		myTableSeatNames[slot] = name
-	end
-
-	recalcMyTableCount()
-
-	setText(F.HUDSeat1, "A: " .. tostring(myTableSeatNames.A or "Empty"))
-	setText(F.HUDSeat2, "B: " .. tostring(myTableSeatNames.B or "Empty"))
-	setText(F.HUDStatus, tostring(myTablePlayerCount) .. " / 2 seated")
-
-	if name == player.Name and _G.GoWideShot then
-		_G.GoWideShot(1.0)
+	if iAmSeated then
+		countdownDone = true
+		setJumpLock(true)
+		if pendingShowLetterPick then
+			pendingShowLetterPick = false
+			openLetterPick()
+		end
+	else
+		forceUnlockRoundState()
 	end
 end)
 
-E.PlayerStood.OnClientEvent:Connect(function(slot, name, rawTableId)
-	local tableId = parseTableId(rawTableId)
-
-	-- Ignore other tables
-	if myTableId and tableId ~= myTableId then
-		return
-	end
-
-	if slot == "A" or slot == "B" then
-		myTableSeatNames[slot] = nil
-	end
-
-	recalcMyTableCount()
-
-	setText(F.HUDSeat1, "A: " .. tostring(myTableSeatNames.A or "Empty"))
-	setText(F.HUDSeat2, "B: " .. tostring(myTableSeatNames.B or "Empty"))
-
-	if name == player.Name then
-		iAmSeated = false
-		mySlot = nil
-		myTableId = nil
-		myTableSeatNames = { A = nil, B = nil }
-		myTablePlayerCount = 0
-		roundJumpLocked = false
-		countdownDone = false
-		pendingShowLetterPick = false
-		myElimMin = 0
-		myElimMax = 27
-		myWrong = {}
-
-		hideGuessingOverlay()
-		hideAll()
-		setText(F.HUDStatus, "Walk up and press E to sit")
-		if _G.ReleaseCamera then _G.ReleaseCamera() end
-	end
+E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName)
+	if not iAmSeated then return end
+	local tp = Players:FindFirstChild(targetName)
+	if tp and _G.ShowHeadBB then _G.ShowHeadBB(tp, text, colorFromName(colorName)) end
+	if tostring(text) == "Guessing" then return end
+	hideGuessingOverlay()
+	if _G.GoWideShot then _G.GoWideShot(0.45) end
 end)
 
 E.ShowWait.OnClientEvent:Connect(function(msg, focusName, focusSlot, countryHint)
@@ -442,72 +550,54 @@ E.ShowWait.OnClientEvent:Connect(function(msg, focusName, focusSlot, countryHint
 	end
 	F.WaitLbl.Text = displayText
 	local guessedName = focusName
-	if not guessedName or guessedName == "" then guessedName = tostring(msg or ""):match("^(.-) is guessing") end
+	if not guessedName or guessedName == "" then
+		guessedName = tostring(msg or ""):match("^(.-) is guessing")
+	end
 	local targetSlot = focusSlot or getSlotByName(guessedName) or getOtherSlot()
 	if guessedName == player.Name then targetSlot = nil end
 	local overlayText = ((guessedName and guessedName ~= "") and (guessedName.." is guessing")) or "Opponent is guessing"
 	if targetSlot and _G.ObservePlayerFace then
 		setGuessingOverlay(overlayText); _G.ObservePlayerFace(targetSlot, 0.7, overlayText)
 	else
-		hideGuessingOverlay(); if _G.GoWideShot then _G.GoWideShot(0.6) end
+		hideGuessingOverlay()
+		if _G.GoWideShot then _G.GoWideShot(0.6) end
 	end
 end)
 
 E.ShowLetterPick.OnClientEvent:Connect(function()
 	if not iAmSeated then return end
-
-	-- If in bot mode, do not hard-block on countdown flag.
-	local inBotMode = _G.ActiveBotTableId ~= nil
-	if not inBotMode and not countdownDone then
-		pendingShowLetterPick = true
-		return
-	end
-
 	openLetterPick()
 end)
 
 E.ShowCountryPick.OnClientEvent:Connect(function(arg1, arg2)
 	if not iAmSeated then return end
-
-	hideAll()
-	hideGuessingOverlay()
+	hideAll(); hideGuessingOverlay()
 	F.CPickF.Visible = true
 
-	-- Supports both server styles:
-	-- 1) FireClient(player, letter, list)
-	-- 2) FireClient(player, { letter = "...", countries = {...} })
-	local letter
-	local serverList
-
+	local letter, serverList
 	if type(arg1) == "table" then
 		letter = arg1.letter or arg1.Letter
 		serverList = arg1.countries or arg1.Countries or arg1.list or arg1.List
 	else
-		letter = arg1
-		serverList = arg2
+		letter = arg1; serverList = arg2
 	end
-
 	letter = string.upper(tostring(letter or ""))
-	if #letter > 1 then
-		letter = string.sub(letter, 1, 1)
-	end
+	if #letter > 1 then letter = string.sub(letter, 1, 1) end
 
 	local localList = CountryData.ByLetter[letter] or {}
 	local countries = mergeCountryLists(localList, serverList)
-
 	debugCountryList("CountryPick", letter, serverList, localList, countries)
 
 	if #countries == 0 then
 		F.WaitF.Visible = true
-		F.WaitLbl.Text = "No countries found for letter " .. tostring(letter) .. "."
+		F.WaitLbl.Text = "No countries found for letter "..tostring(letter).."."
 		return
 	end
 
 	buildCountryList(F.CPickScroll, countries, function(countryName)
 		disableAll(F.CPickScroll)
 		E.CountryChosen:FireServer(countryName)
-		hideAll()
-		F.WaitF.Visible = true
+		hideAll(); F.WaitF.Visible = true
 		F.WaitLbl.Text = "Secret country chosen"
 		if _G.GoWideShot then _G.GoWideShot(0.8) end
 	end, "CountryPick")
@@ -515,46 +605,31 @@ end)
 
 E.ShowLetterGuess.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	hideAll()
-	hideGuessingOverlay()
-
+	hideAll(); hideGuessingOverlay()
 	myElimMin = tonumber(data.eliminatedMin) or 0
 	myElimMax = tonumber(data.eliminatedMax) or 27
-
 	F.LGuessF.Visible = true
-	F.LGuessTitle.Text = "Guess " .. tostring(data.opponentName or "?") .. "'s letter"
+	F.LGuessTitle.Text = "Guess "..tostring(data.opponentName or "?").."'s letter"
 	F.LGuessFeedback.Text = "One guess per turn"
-	F.LGuessFeedback.TextColor3 = Color3.fromRGB(200, 200, 220)
-	F.LGuessTimer.Text = tostring(tonumber(data.timeLeft) or 60) .. "s"
-	F.LGuessTimer.TextColor3 = Color3.fromRGB(255, 215, 0)
-
-	if mySlot and _G.ZoomGuessTurn then
-		_G.ZoomGuessTurn(mySlot, 0.8)
-	elseif mySlot and _G.ZoomIntoMyFace then
-		_G.ZoomIntoMyFace(mySlot, 0.8)
-	end
-
+	F.LGuessFeedback.TextColor3 = Color3.fromRGB(200,200,220)
+	F.LGuessTimer.Text = tostring(tonumber(data.timeLeft) or 60).."s"
+	F.LGuessTimer.TextColor3 = Color3.fromRGB(255,215,0)
+	if mySlot and _G.ZoomGuessTurn then _G.ZoomGuessTurn(mySlot, 0.8)
+	elseif mySlot and _G.ZoomIntoMyFace then _G.ZoomIntoMyFace(mySlot, 0.8) end
 	buildLetterGrid(F.LGuessGrid, function(letter)
 		E.SubmitLetterGuess:FireServer(letter)
-		hideAll()
-		F.WaitF.Visible = true
+		hideAll(); F.WaitF.Visible = true
 		F.WaitLbl.Text = "Waiting for response..."
 		if _G.GoWideShot then _G.GoWideShot(0.5) end
 	end)
-
 	applyElim(F.LGuessGrid, myElimMin, myElimMax)
 end)
 
 E.LetterGuessResult.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-
 	local result = string.lower(tostring(data.result or ""))
-	if result == "higher" then
-		myElimMin = tonumber(data.eliminatedMin) or myElimMin
-	elseif result == "lower" then
-		myElimMax = tonumber(data.eliminatedMax) or myElimMax
-	end
-
+	if result == "higher" then myElimMin = tonumber(data.eliminatedMin) or myElimMin
+	elseif result == "lower" then myElimMax = tonumber(data.eliminatedMax) or myElimMax end
 	hideGuessingOverlay()
 	if _G.GoWideShot then _G.GoWideShot(0.45) end
 	F.WaitF.Visible = true
@@ -567,10 +642,12 @@ E.ShowCountryGuess.OnClientEvent:Connect(function(data)
 	if data.waiting then
 		F.WaitF.Visible = true
 		local waitMsg = data.message or "Opponent is guessing your country..."
-		if data.countryHint and data.countryHint ~= "?" then waitMsg = waitMsg.."\n\nYour country: "..tostring(data.countryHint) end
+		if data.countryHint and data.countryHint ~= "?" then
+			waitMsg = waitMsg.."\n\nYour country: "..tostring(data.countryHint)
+		end
 		F.WaitLbl.Text = waitMsg
 		local otherSlot = getOtherSlot()
-		local otherName = data.opponentName or seatNames[otherSlot]
+		local otherName = data.opponentName or myTableSeatNames[otherSlot]
 		local overlayText = ((otherName and otherName ~= "") and (otherName.." is guessing")) or "Opponent is guessing"
 		if otherSlot and _G.ObservePlayerFace then
 			setGuessingOverlay(overlayText); _G.ObservePlayerFace(otherSlot, 0.7, overlayText)
@@ -580,8 +657,10 @@ E.ShowCountryGuess.OnClientEvent:Connect(function(data)
 	if data.wrongList then myWrong = data.wrongList end
 	F.CGuessF.Visible = true
 	F.CGuessTitle.Text = "Guess "..tostring(data.opponentName or "?").."'s country"
-	F.CGuessInfo.Text = "One guess per turn"; F.CGuessInfo.TextColor3 = Color3.fromRGB(200,200,220)
-	F.CGuessTimer.Text = tostring(data.timeLeft or 60).."s"; F.CGuessTimer.TextColor3 = Color3.fromRGB(255,215,0)
+	F.CGuessInfo.Text = "One guess per turn"
+	F.CGuessInfo.TextColor3 = Color3.fromRGB(200,200,220)
+	F.CGuessTimer.Text = tostring(data.timeLeft or 60).."s"
+	F.CGuessTimer.TextColor3 = Color3.fromRGB(255,215,0)
 	if mySlot and _G.ZoomGuessTurn then _G.ZoomGuessTurn(mySlot, 0.8)
 	elseif mySlot and _G.ZoomIntoMyFace then _G.ZoomIntoMyFace(mySlot, 0.8) end
 	local letter = string.upper(tostring(data.letter or ""))
@@ -589,88 +668,100 @@ E.ShowCountryGuess.OnClientEvent:Connect(function(data)
 	local countries = mergeCountryLists(localList, data.countries)
 	debugCountryList("CountryGuess", letter, data.countries, localList, countries)
 	buildCountryList(F.CGuessScroll, countries, function(countryName)
-		disableAll(F.CGuessScroll); E.SubmitCountryGuess:FireServer(countryName)
-		hideAll(); F.WaitF.Visible = true; F.WaitLbl.Text = "Waiting for response..."
+		disableAll(F.CGuessScroll)
+		E.SubmitCountryGuess:FireServer(countryName)
+		hideAll(); F.WaitF.Visible = true
+		F.WaitLbl.Text = "Waiting for response..."
 		if _G.GoWideShot then _G.GoWideShot(0.5) end
 	end, "CountryGuess")
 	for _, child in ipairs(F.CGuessScroll:GetChildren()) do
 		if child:IsA("TextButton") then
 			local cn = string.gsub(child.Name, "^C_", "")
-			if isWrong(cn) then child.BackgroundColor3 = Color3.fromRGB(100,25,25); child.TextColor3 = Color3.fromRGB(180,70,70); child.Active = false end
+			if isWrong(cn) then
+				child.BackgroundColor3 = Color3.fromRGB(100,25,25)
+				child.TextColor3 = Color3.fromRGB(180,70,70)
+				child.Active = false
+			end
 		end
 	end
 end)
 
 E.CountryGuessResult.OnClientEvent:Connect(function(data)
 	if not iAmSeated then return end
-	if data.result == "no" and data.wrongName and data.wrongName ~= "" then table.insert(myWrong, data.wrongName) end
+	if data.result == "no" and data.wrongName and data.wrongName ~= "" then
+		table.insert(myWrong, data.wrongName)
+	end
 	hideGuessingOverlay()
 	if _G.GoWideShot then _G.GoWideShot(0.45) end
-	F.WaitF.Visible = true; F.WaitLbl.Text = tostring(data.message or "Response received")
+	F.WaitF.Visible = true
+	F.WaitLbl.Text = tostring(data.message or "Response received")
 end)
 
 E.TimerTick.OnClientEvent:Connect(function(t)
 	if not (iAmSeated and mySlot and myTablePlayerCount >= 2) then return end
-	local col = t <= 10 and Color3.fromRGB(255,60,60) or t <= 30 and Color3.fromRGB(255,180,50) or Color3.fromRGB(255,215,0)
+	local col = t <= 10 and Color3.fromRGB(255,60,60)
+		or t <= 30 and Color3.fromRGB(255,180,50)
+		or Color3.fromRGB(255,215,0)
 	local text = t.."s"
 	if F.LGuessF.Visible then F.LGuessTimer.Text = text; F.LGuessTimer.TextColor3 = col end
 	if F.CGuessF.Visible then F.CGuessTimer.Text = text; F.CGuessTimer.TextColor3 = col end
 end)
 
-E.RoundOver.OnClientEvent:Connect(function()
-end)
+E.RoundOver.OnClientEvent:Connect(function() end)
 
 E.GameOver.OnClientEvent:Connect(function(data)
 	hideAll()
-	roundJumpLocked = false
-
+	hardUnlockMovementAndCamera()
+	forceUnlockRoundState()
 	local winner = (data and data.winner) or "Unknown"
 	if iAmSeated then
 		if F.GameOverF and F.GameOverLbl then
 			F.GameOverF.Visible = true
-			F.GameOverLbl.Text = "Winner: " .. winner
+			F.GameOverLbl.Text = "Winner: "..winner
 		else
 			F.WaitF.Visible = true
-			F.WaitLbl.Text = "Winner: " .. winner
+			F.WaitLbl.Text = "Winner: "..winner
 		end
-	end
-
-	if _G.ReleaseCamera then
-		_G.ReleaseCamera()
-		task.delay(0.2, function()
-			if _G.ReleaseCamera then _G.ReleaseCamera() end
-		end)
 	end
 end)
 
 E.ResetAll.OnClientEvent:Connect(function()
-	myElimMin = 0
-	myElimMax = 27
-	myWrong = {}
-	playerCount = 0
-	seatNames.A = nil
-	seatNames.B = nil
-	iAmSeated = false
-	mySlot = nil
-	countdownDone = false
-	pendingShowLetterPick = false
-	roundJumpLocked = false
+	myElimMin = 0; myElimMax = 27; myWrong = {}
+	iAmSeated = false; mySlot = nil; myTableId = nil
+	myTableSeatNames = { A = nil, B = nil }
+	myTablePlayerCount = 0
+	countdownDone = false; pendingShowLetterPick = false
+	hardUnlockMovementAndCamera()
+	forceUnlockRoundState()
+end)
 
-	hideGuessingOverlay()
-	hideAll()
-	setText(F.HUDSeat1, "A: Empty")
-	setText(F.HUDSeat2, "B: Empty")
-	setText(F.HUDStatus, "Walk up and press E to sit")
+local function hookHumanoidUnlock(char)
+	local hum = char:WaitForChild("Humanoid", 10)
+	if not hum then return end
+	hum.Seated:Connect(function(isSeated)
+		if not isSeated and myTablePlayerCount < 2 then setJumpLock(false) end
+	end)
+	hum:GetPropertyChangedSignal("Jump"):Connect(function()
+		if hum.Jump and iAmSeated and not roundJumpLocked then
+			tryStandFromJump()
+		end
+	end)
+	hum.Died:Connect(function() setJumpLock(false) end)
+end
 
-	if _G.ReleaseCamera then _G.ReleaseCamera() end
+if player.Character then hookHumanoidUnlock(player.Character) end
+
+player.CharacterAdded:Connect(function(char)
+	task.wait(0.2)
+	setJumpLock(false)
+	hookHumanoidUnlock(char)
 end)
 
 player.CharacterAdded:Connect(function()
 	task.wait(0.15)
-	hideGuessingOverlay()
-	hideAll()
+	hideGuessingOverlay(); hideAll()
 	if F.GameOverF then F.GameOverF.Visible = false end
 	if _G.ReleaseCamera then _G.ReleaseCamera(0.2) end
 end)
 
-print("[ClientHandler] Ready - " .. player.Name)
+print("[ClientHandler] Ready - "..player.Name)
