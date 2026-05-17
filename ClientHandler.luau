@@ -4,7 +4,13 @@ local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
 local CAS = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
-
+task.delay(3, function()
+	local ev = RS:FindFirstChild("Events")
+	local ready = ev and ev:FindFirstChild("ClientReady")
+	if ready and ready:IsA("RemoteEvent") then
+		ready:FireServer({ source = "ClientHandlerFallback", at = os.clock() })
+	end
+end)
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
