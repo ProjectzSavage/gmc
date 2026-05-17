@@ -183,7 +183,6 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	end
 	seatState.deadConn = humanoid.Died:Connect(function()
 		if seatState.player == player then
-			-- Force stand even when table is locked (mid-match).
 			standPlayer(player, true)
 		end
 	end)
@@ -192,15 +191,20 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 
 	local playerA = tableState.seats.A.player
 	local playerB = tableState.seats.B.player
-	if playerA and playerB and _G.OnBothSeated then
+	if playerA and playerB then
 		tableState.token += 1
 		local token = tableState.token
+
 		task.delay(0.2, function()
 			local againA = tableState.seats.A.player
 			local againB = tableState.seats.B.player
 			if tableState.token ~= token then return end
-			if againA and againB then
+			if not (againA and againB) then return end
+
+			if _G.OnBothSeated then
 				_G.OnBothSeated(tableId, againA, againB)
+			else
+				warn("[SeatManager] _G.OnBothSeated missing for table:", tableId)
 			end
 		end)
 	end
