@@ -47,7 +47,7 @@ local CFG = {
 	SWITCH_DELAY = 0.8,
 }
 local BOT_REWARDS = {
-	Cash = 200,
+	Cash = 150,
 	Wins = 1,
 	Winstreak = 1,
 }
