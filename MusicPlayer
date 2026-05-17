@@ -1,0 +1,48 @@
+local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
+
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+
+local musicF = gameGui:WaitForChild("MusicF")
+local musicBtn = musicF:WaitForChild("MusicBtn")
+
+local MUSIC_ID = "rbxassetid://130568682236380" -- your music
+local ICON_MUTE = "rbxassetid://125155179841924" -- shown when playing
+local ICON_RESUME = "rbxassetid://78929986938900" -- shown when muted
+
+local DEFAULT_VOLUME = 0.35
+local muted = false
+
+local music = SoundService:FindFirstChild("GameMusic")
+if not music then
+	music = Instance.new("Sound")
+	music.Name = "GameMusic"
+	music.SoundId = MUSIC_ID
+	music.Volume = DEFAULT_VOLUME
+	music.Looped = true
+	music.Parent = SoundService
+end
+
+if not music.IsPlaying then
+	music:Play()
+end
+
+local function refreshButton()
+	musicBtn.Image = muted and ICON_RESUME or ICON_MUTE
+end
+
+musicBtn.Activated:Connect(function()
+	muted = not muted
+	if muted then
+		music.Volume = 0
+	else
+		music.Volume = DEFAULT_VOLUME
+		if not music.IsPlaying then
+			music:Play()
+		end
+	end
+	refreshButton()
+end)
+
+refreshButton()
