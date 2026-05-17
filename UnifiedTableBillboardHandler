@@ -1,0 +1,273 @@
+-- UnifiedTableBillboardHandler v5
+-- Synchronous setup — board is fully populated before any events connect
+
+local Players        = game:GetService("Players")
+local RS             = game:GetService("ReplicatedStorage")
+local TweenService   = game:GetService("TweenService")
+local ReplicatedFirst= game:GetService("ReplicatedFirst")
+
+local loadingState = ReplicatedFirst:FindFirstChild("LoadingState")
+if loadingState and loadingState:IsA("BoolValue") and not loadingState.Value then
+	local conn
+	conn = loadingState:GetPropertyChangedSignal("Value"):Connect(function()
+		if loadingState.Value and conn then conn:Disconnect(); conn = nil end
+	end)
+	local t = 0
+	while not loadingState.Value and t < 10 do task.wait(0.1); t += 0.1 end
+	if conn then conn:Disconnect() end
+end
+
+local Events         = RS:WaitForChild("Events")
+local PlayerSat      = Events:WaitForChild("PlayerSat")
+local PlayerStood    = Events:WaitForChild("PlayerStood")
+local TableCountdown = Events:WaitForChild("TableCountdown")
+local TableStatus    = Events:WaitForChild("TableStatus")
+local BotTableSat       = Events:WaitForChild("BotTableSat")
+local BotTableStood     = Events:WaitForChild("BotTableStood")
+local BotTableCountdown = Events:WaitForChild("BotTableCountdown")
+local BotTableStatus    = Events:WaitForChild("BotTableStatus")
+local GetSeatSnapshot   = Events:FindFirstChild("GetSeatSnapshot")
+
+local TablesFolder    = workspace:WaitForChild("Tables")
+local BotTablesFolder = workspace:WaitForChild("BotTables")
+
+local board = {}
+
+local function setText(obj, txt)
+	if obj then pcall(function() obj.Text = txt end) end
+end
+local function setVis(obj, v)
+	if obj then pcall(function() obj.Visible = v end) end
+end
+
+local function showDefault(id)
+	local e = board[id]
+	if not e then return end
+	if e.bb then e.bb.Enabled = true end
+	local count = (e.occupied.A and 1 or 0) + (e.occupied.B and 1 or 0)
+	setVis(e.countLbl,     true)
+	setVis(e.winLbl,       true)
+	setVis(e.countdownLbl, false)
+	if count >= e.max then
+		setText(e.countLbl, count .. "/" .. e.max .. " Player" .. (e.max > 1 and "s ✅" or " ✅"))
+	else
+		setText(e.countLbl, count .. "/" .. e.max .. " Player" .. (e.max > 1 and "s" or ""))
+	end
+end
+
+local function playCountdownAnim(e, text)
+	if not e.countdownLbl then return end
+	setText(e.countdownLbl, text)
+	pcall(function() e.countdownLbl.TextTransparency = 0 end)
+	TweenService:Create(
+		e.countdownLbl,
+		TweenInfo.new(0.85, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+		{ TextTransparency = 0.4 }
+	):Play()
+end
+
+local function showCountdown(id, text)
+	local e = board[id]
+	if not e then return end
+	if e.bb then e.bb.Enabled = true end
+	setVis(e.countLbl,     false)
+	setVis(e.winLbl,       false)
+	setVis(e.countdownLbl, true)
+	playCountdownAnim(e, text)
+end
+
+local function showStatus(id, text)
+	local e = board[id]
+	if not e then return end
+	if e.bb then e.bb.Enabled = true end
+	setVis(e.countLbl,     false)
+	setVis(e.winLbl,       false)
+	setVis(e.countdownLbl, true)
+	setText(e.countdownLbl, text)
+end
+
+local function showGoAndHide(id)
+	local e = board[id]
+	if not e then return end
+	local token = e.countdownToken + 1
+	e.countdownToken = token
+	if e.bb then e.bb.Enabled = true end
+	setVis(e.countdownLbl, true)
+	setVis(e.countLbl,     false)
+	setVis(e.winLbl,       false)
+	playCountdownAnim(e, "🌍 GO!")
+	task.delay(0.75, function()
+		local cur = board[id]
+		if not cur or cur.countdownToken ~= token then return end
+		showDefault(id)
+	end)
+end
+
+-- ── Synchronous setup — yields here until ALL children are ready ──
+-- Replace the setupModel function and all board lookups
+
+local function setupModel(model, isBot)
+	local top = model:WaitForChild("TableTop", 15)
+	if not top then warn("[Billboard] No TableTop:", model.Name); return end
+	local bb = top:WaitForChild("TableBillboard", 15)
+	if not bb then warn("[Billboard] No TableBillboard:", model.Name); return end
+	local bg = bb:WaitForChild("BG", 15)
+	if not bg then warn("[Billboard] No BG:", model.Name); return end
+
+	-- KEY includes scope so "Table01" and bot "Table01" don't clash
+	local key = (isBot and "bot:" or "normal:") .. model.Name
+
+	local entry = {
+		bb             = bb,
+		countLbl       = bg:WaitForChild("CountLbl",     15),
+		countdownLbl   = bg:WaitForChild("CountdownLbl", 15),
+		winLbl         = bg:FindFirstChild("WinLbl"),
+		isBot          = isBot,
+		max            = isBot and 1 or 2,
+		occupied       = { A = false, B = false },
+		countdownToken = 0,
+	}
+	board[key] = entry
+	showDefault(key)
+end
+
+-- Run all setups concurrently, then WAIT for all to finish before connecting events
+local pending = 0
+local allDone = Instance.new("BindableEvent")
+
+local function spawnSetup(model, isBot)
+	pending += 1
+	task.spawn(function()
+		setupModel(model, isBot)
+		pending -= 1
+		if pending == 0 then allDone:Fire() end
+	end)
+end
+
+for _, m in ipairs(TablesFolder:GetChildren()) do
+	if m:IsA("Model") then spawnSetup(m, false) end
+end
+for _, m in ipairs(BotTablesFolder:GetChildren()) do
+	if m:IsA("Model") then spawnSetup(m, true) end
+end
+
+-- Wait for every single model to finish before connecting ANY event
+if pending > 0 then allDone.Event:Wait() end
+
+local boardCount = 0
+for _ in pairs(board) do boardCount += 1 end
+print("[Billboard] Total in board:", boardCount)
+for k, v in pairs(board) do
+	print(" -", k, "| isBot:", v.isBot, "| countLbl:", v.countLbl ~= nil, "| countdownLbl:", v.countdownLbl ~= nil)
+end
+
+allDone:Destroy()
+
+-- Board is now fully populated
+print("[Billboard] Board ready, keys:")
+for k in pairs(board) do print(" -", k) end
+
+-- ── Snapshot for late join ─────────────────────────────────────
+if GetSeatSnapshot and GetSeatSnapshot:IsA("RemoteFunction") then
+	local ok, snap = pcall(function() return GetSeatSnapshot:InvokeServer() end)
+	for id, count in pairs(snap.tables or {}) do
+		local e = board["normal:" .. tostring(id)]
+		local n = tonumber(count) or 0
+		if e then
+			e.occupied.A = n >= 1
+			e.occupied.B = n >= 2
+			showDefault("normal:" .. tostring(id))
+		end
+	end
+	for id, count in pairs(snap.botTables or {}) do
+		local e = board["bot:" .. tostring(id)]
+		local n = tonumber(count) or 0
+		if e then
+			e.occupied.A = n >= 1
+			showDefault("bot:" .. tostring(id))
+		end
+	end
+end
+
+-- ── Events — board guaranteed populated now ────────────────────
+PlayerSat.OnClientEvent:Connect(function(slot, _name, tableId)
+	local id = "normal:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	if slot == "A" or slot == "B" then
+		e.occupied[slot] = true
+	else
+		if not e.occupied.A then e.occupied.A = true else e.occupied.B = true end
+	end
+	showDefault(id)
+end)
+
+PlayerStood.OnClientEvent:Connect(function(slot, _name, tableId)
+	local id = "normal:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	if slot == "A" or slot == "B" then
+		e.occupied[slot] = false
+	else
+		e.occupied.A = false
+		e.occupied.B = false
+	end
+	showDefault(id)
+end)
+
+TableCountdown.OnClientEvent:Connect(function(tableId, t)
+	local id = "normal:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	local n = tonumber(t)
+	if n and n > 0 then showCountdown(id, tostring(n)) else showGoAndHide(id) end
+end)
+
+TableStatus.OnClientEvent:Connect(function(tableId, text)
+	local id = "normal:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	local msg = tostring(text or "")
+	if msg == "" then showDefault(id) else showStatus(id, msg) end
+end)
+
+BotTableSat.OnClientEvent:Connect(function(tableId)
+	local id = "bot:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	e.occupied.A = true
+	showDefault(id)
+end)
+
+BotTableStood.OnClientEvent:Connect(function(tableId)
+	local id = "bot:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	e.occupied.A = false
+	showDefault(id)
+end)
+
+BotTableCountdown.OnClientEvent:Connect(function(tableId, t)
+	local id = "bot:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	local n = tonumber(t)
+	if n and n > 0 then showCountdown(id, tostring(n)) else showGoAndHide(id) end
+end)
+
+BotTableStatus.OnClientEvent:Connect(function(tableId, text)
+	local id = "bot:" .. tostring(tableId or "")
+	local e = board[id]
+	if not e then return end
+	local msg = tostring(text or "")
+	if msg == "" then showDefault(id) else showStatus(id, msg) end
+end)
+
+TablesFolder.ChildAdded:Connect(function(c)
+	if c:IsA("Model") then task.spawn(function() setupModel(c, false) end) end
+end)
+BotTablesFolder.ChildAdded:Connect(function(c)
+	if c:IsA("Model") then task.spawn(function() setupModel(c, true) end) end
+end)
+
+print("[UnifiedTableBillboardHandler] Ready v5")
