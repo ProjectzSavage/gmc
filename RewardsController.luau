@@ -1,5 +1,5 @@
--- RewardsController (full rewrite with reward icon paging arrows)
-print("[Rewards] Script starting...")
+-- RewardsController (full rewrite, stable subtitle + robux spent text)
+print("[RewardsController] Starting...")
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -110,13 +110,12 @@ local IMAGE_CONFIG = {
 }
 
 local payload = nil
-local activeCat = nil
+local activeCat = "playtime"
 
 local playtimeSeconds = 0
 local dailyCountdown = 0
-local lastUpdateTime = tick()
-local updateConnection = nil
-
+local lastTick = tick()
+local updateConn = nil
 local rowPageState = {}
 
 local function formatTime(seconds)
@@ -125,6 +124,16 @@ local function formatTime(seconds)
 	local m = math.floor((seconds % 3600) / 60)
 	local s = seconds % 60
 	return string.format("%02d:%02d:%02d", h, m, s)
+end
+
+local function requestSync()
+	if RewardRequestSync:IsA("RemoteFunction") then
+		pcall(function()
+			RewardRequestSync:InvokeServer()
+		end)
+	elseif RewardRequestSync:IsA("RemoteEvent") then
+		RewardRequestSync:FireServer()
+	end
 end
 
 local function clearRows()
@@ -153,17 +162,6 @@ local function styleClaim(btn, row)
 	btn.ZIndex = 20
 end
 
-local function loadProfileImage(imageLabel, userId)
-	if userId == 0 then
-		imageLabel.Image = "rbxassetid://0"
-		return
-	end
-	local success, imageUrl = pcall(function()
-		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
-	end)
-	imageLabel.Image = success and imageUrl or "rbxassetid://0"
-end
-
 local function parseRewardImages(rewardsText)
 	local images = {}
 	local txt = tostring(rewardsText or "")
@@ -173,6 +171,17 @@ local function parseRewardImages(rewardsText)
 		end
 	end
 	return images
+end
+
+local function loadProfileImage(imageLabel, userId)
+	if userId == 0 then
+		imageLabel.Image = "rbxassetid://0"
+		return
+	end
+	local ok, imageUrl = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+	end)
+	imageLabel.Image = ok and imageUrl or "rbxassetid://0"
 end
 
 local function ensurePagerButton(container, name, text, xScale, xOffset)
@@ -199,7 +208,6 @@ local function ensurePagerButton(container, name, text, xScale, xOffset)
 		corner.CornerRadius = UDim.new(1, 0)
 		corner.Parent = btn
 	end
-
 	return btn
 end
 
@@ -262,7 +270,7 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 		local visibleCount = endIndex - startIndex + 1
 
 		local contentWidth = visibleCount * iconSize + (visibleCount - 1) * spacing
-		local contentStart = ((container.AbsoluteSize.X - contentWidth) / 2)
+		local contentStart = (container.AbsoluteSize.X - contentWidth) / 2
 
 		for i = startIndex, endIndex do
 			local localIndex = i - startIndex + 1
@@ -321,7 +329,7 @@ local function setupRowContent(clone, categoryId, rowIndex, rowData)
 		if categoryId == "playtime" then
 			leftLbl.Text = rowData.left or ""
 		elseif categoryId == "daily" then
-			leftLbl.Text = "Day " .. rowIndex
+			leftLbl.Text = "Day " .. tostring(rowIndex)
 		elseif categoryId == "group" then
 			leftLbl.Text = "Group"
 		elseif categoryId == "vipdaily" then
@@ -333,21 +341,18 @@ local function setupRowContent(clone, categoryId, rowIndex, rowData)
 		end
 	end
 
-	if categoryId == "social" and SOCIAL_DEVS[rowIndex] then
-		if leftLbl then
-			leftLbl.Text = ""
-			local img = leftLbl:FindFirstChild("ProfileImage")
-			if not img then
-				img = Instance.new("ImageLabel")
-				img.Name = "ProfileImage"
-				img.Size = UDim2.new(0, 80, 0, 80)
-				img.Position = UDim2.new(0.5, 0, 0.5, 0)
-				img.AnchorPoint = Vector2.new(0.5, 0.5)
-				img.BackgroundTransparency = 1
-				img.Parent = leftLbl
-			end
-			loadProfileImage(img, SOCIAL_DEVS[rowIndex].userId)
+	if categoryId == "social" and SOCIAL_DEVS[rowIndex] and leftLbl then
+		local img = leftLbl:FindFirstChild("ProfileImage")
+		if not img then
+			img = Instance.new("ImageLabel")
+			img.Name = "ProfileImage"
+			img.Size = UDim2.new(0, 80, 0, 80)
+			img.Position = UDim2.new(0.5, 0, 0.5, 0)
+			img.AnchorPoint = Vector2.new(0.5, 0.5)
+			img.BackgroundTransparency = 1
+			img.Parent = leftLbl
 		end
+		loadProfileImage(img, SOCIAL_DEVS[rowIndex].userId)
 	end
 
 	local rewardImageKeys = parseRewardImages(rowData.rewards or "")
@@ -355,28 +360,67 @@ local function setupRowContent(clone, categoryId, rowIndex, rowData)
 	buildRewardPager(container, template, rowKey, rewardImageKeys)
 end
 
-local function stopCountdown()
-	if updateConnection then
-		updateConnection:Disconnect()
-		updateConnection = nil
+local function refreshCategorySubtitle()
+	if not payload or not activeCat then
+		subLbl.Text = ""
+		return
+	end
+
+	if activeCat == "robuxspent" then
+		local spent = tonumber(payload.robuxSpentTotal) or 0
+		subLbl.Text = string.format("Total Robux spent: R$%d", spent)
+		return
+	end
+
+	if activeCat == "playtime" then
+		subLbl.Text = "You played for " .. formatTime(playtimeSeconds)
+		return
+	end
+
+	if activeCat == "daily" then
+		if dailyCountdown > 0 then
+			subLbl.Text = "Ready to claim in " .. formatTime(dailyCountdown)
+		else
+			subLbl.Text = "Daily reward ready"
+		end
+		return
+	end
+
+	if activeCat == "social" then
+		subLbl.Text = "Follow these developers on Roblox!"
+	elseif activeCat == "group" then
+		subLbl.Text = "Like the game + Join the group"
+	elseif activeCat == "vipdaily" then
+		subLbl.Text = "Become VIP to claim"
+	else
+		subLbl.Text = ""
 	end
 end
 
-local function startCountdown()
-	stopCountdown()
-	lastUpdateTime = tick()
-	updateConnection = RunService.Heartbeat:Connect(function()
+local function stopLiveUpdater()
+	if updateConn then
+		updateConn:Disconnect()
+		updateConn = nil
+	end
+end
+
+local function startLiveUpdater()
+	stopLiveUpdater()
+	lastTick = tick()
+
+	updateConn = RunService.Heartbeat:Connect(function()
 		if not payload or not activeCat then return end
+
 		local now = tick()
-		local dt = now - lastUpdateTime
-		lastUpdateTime = now
+		local dt = now - lastTick
+		lastTick = now
 
 		if activeCat == "playtime" then
 			playtimeSeconds += dt
-			subLbl.Text = "You played for " .. formatTime(playtimeSeconds)
+			refreshCategorySubtitle()
 		elseif activeCat == "daily" then
 			dailyCountdown = math.max(0, dailyCountdown - dt)
-			subLbl.Text = "Ready to claim in " .. formatTime(dailyCountdown)
+			refreshCategorySubtitle()
 		end
 	end)
 end
@@ -394,7 +438,7 @@ local function renderRows()
 	for idx, row in ipairs(rows) do
 		local clone = rowTemplate:Clone()
 		clone.Visible = true
-		clone.Name = "Row_" .. tostring(row.id)
+		clone.Name = "Row_" .. tostring(row.id or idx)
 		clone.Position = UDim2.new(rowTemplate.Position.X.Scale, rowTemplate.Position.X.Offset, 0, y)
 		clone.Size = UDim2.new(rowTemplate.Size.X.Scale, rowTemplate.Size.X.Offset, 0, rowH)
 		clone.Parent = rowsScroll
@@ -419,10 +463,10 @@ local function renderRows()
 end
 
 local function render()
-	if not activeCat then return end
 	titleLbl.Text = CAT_TITLE[activeCat] or "Rewards"
 
 	if not payload then
+		stopLiveUpdater()
 		subLbl.Text = "Waiting for server sync..."
 		clearRows()
 		return
@@ -430,36 +474,41 @@ local function render()
 
 	if activeCat == "playtime" then
 		playtimeSeconds = tonumber(payload.totalPlaytime) or 0
-		subLbl.Text = "You played for " .. formatTime(playtimeSeconds)
-		startCountdown()
+		startLiveUpdater()
 	elseif activeCat == "daily" then
 		dailyCountdown = tonumber(payload.dailyCountdown) or 0
-		subLbl.Text = "Ready to claim in " .. formatTime(dailyCountdown)
-		startCountdown()
+		startLiveUpdater()
 	else
-		stopCountdown()
-		if activeCat == "social" then
-			subLbl.Text = "Follow these developers on Roblox!"
-		elseif activeCat == "group" then
-			subLbl.Text = "Like the game + Join the group"
-		elseif activeCat == "vipdaily" then
-			subLbl.Text = "Become VIP to claim"
-		elseif activeCat == "robuxspent" then
-			subLbl.Text = "Robux spent rewards"
-		end
+		stopLiveUpdater()
 	end
 
+	refreshCategorySubtitle()
 	renderRows()
+end
+
+local function selectCategory(cat)
+	activeCat = cat
+	render()
 end
 
 for btnName, cat in pairs(TAB_TO_CAT) do
 	local btn = leftTabs:FindFirstChild(btnName)
 	if btn and btn:IsA("TextButton") then
 		btn.MouseButton1Click:Connect(function()
-			activeCat = cat
-			render()
+			selectCategory(cat)
 		end)
 	end
+end
+
+local function onOpen()
+	root.Visible = true
+	requestSync()
+	render()
+end
+
+local function onClose()
+	root.Visible = false
+	stopLiveUpdater()
 end
 
 local t = 0
@@ -470,24 +519,30 @@ end
 
 if _G.UIWindowAnimator and _G.UIWindowAnimator.register then
 	_G.UIWindowAnimator.register("rewards", root, openBtn, closeBtn)
+	openBtn.MouseButton1Click:Connect(onOpen)
+	closeBtn.MouseButton1Click:Connect(onClose)
 else
 	openBtn.MouseButton1Click:Connect(function()
-		root.Visible = not root.Visible
+		if root.Visible then
+			onClose()
+		else
+			onOpen()
+		end
 	end)
-	closeBtn.MouseButton1Click:Connect(function()
-		root.Visible = false
-	end)
+	closeBtn.MouseButton1Click:Connect(onClose)
 end
 
 RewardSync.OnClientEvent:Connect(function(newPayload)
-	if type(newPayload) ~= "table" then
-		return
+	if type(newPayload) ~= "table" then return end
+	print("[DEBUG] payload keys:")
+	for k, v in pairs(newPayload) do
+		print(" -", k, "=", tostring(v))
 	end
 	payload = newPayload
-	if activeCat then
-		renderRows()
-	end
+	render()
 end)
 
 root.Visible = false
+requestSync()
+render()
 print("[RewardsController] Ready")
