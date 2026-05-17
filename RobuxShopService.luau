@@ -123,36 +123,64 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	if not player then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-	local info = MarketplaceService:GetProductInfoAsync(receiptInfo.ProductId, Enum.InfoType.Product)
-	local price = (info and (info.PriceInRobux or info.Price)) or 0
+
+	-- optional robux spent tracking
+	local okInfo, info = pcall(function()
+		return MarketplaceService:GetProductInfoAsync(receiptInfo.ProductId, Enum.InfoType.Product)
+	end)
+	local price = (okInfo and info and (info.PriceInRobux or info.Price)) or 0
 	if _G.RewardsAddRobuxSpent then
 		_G.RewardsAddRobuxSpent(player, price)
 	end
-	local key = PRODUCT_TO_KEY[receiptInfo.ProductId]
-	if not key then
-		-- Check game powerups
-		if _G.GamePowerupProductToType then
-			local pType = _G.GamePowerupProductToType[receiptInfo.ProductId]
-			if pType then
-				task.delay(0.5, function()
-					if _G.ApplyGamePowerup then
-						_G.ApplyGamePowerup(player, pType)
-					end
-					if _G.TryHandleStealReceipt then
-						local handled = _G.TryHandleStealReceipt(receiptInfo, player)
-						if handled then
-							return Enum.ProductPurchaseDecision.PurchaseGranted
-						end
-					end
-				end)
-				return Enum.ProductPurchaseDecision.PurchaseGranted
-			end
+
+	-- 1) Streak buyback FIRST
+	if _G.TryHandleStreakBuybackReceipt then
+		local ok, handled = pcall(function()
+			return _G.TryHandleStreakBuybackReceipt(receiptInfo, player)
+		end)
+		if ok and handled then
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		elseif not ok then
+			warn("[ProcessReceipt] Streak handler error:", handled)
 		end
+	end
+
+	-- 2) Existing shop devproducts
+	local key = PRODUCT_TO_KEY[receiptInfo.ProductId]
+	if key then
+		grantProduct(player, key)
+		task.defer(function()
+			syncPlayer(player)
+		end)
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 
-	grantProduct(player, key)
-	task.defer(function() syncPlayer(player) end)
+	-- 3) Existing game powerups
+	if _G.GamePowerupProductToType then
+		local pType = _G.GamePowerupProductToType[receiptInfo.ProductId]
+		if pType then
+			task.delay(0.5, function()
+				if _G.ApplyGamePowerup then
+					_G.ApplyGamePowerup(player, pType)
+				end
+			end)
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+	end
+
+	-- 4) Existing steal receipt handler (if used)
+	if _G.TryHandleStealReceipt then
+		local ok, handled = pcall(function()
+			return _G.TryHandleStealReceipt(receiptInfo, player)
+		end)
+		if ok and handled then
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		elseif not ok then
+			warn("[ProcessReceipt] Steal handler error:", handled)
+		end
+	end
+
+	-- unknown product fallback
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
