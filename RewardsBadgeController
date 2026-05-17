@@ -1,0 +1,82 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local gameGui = player:WaitForChild("PlayerGui"):WaitForChild("GameGui")
+local events = RS:WaitForChild("Events")
+
+local RewardSync = events:WaitForChild("RewardSync")
+local RewardClaim = events:WaitForChild("RewardClaim")
+local RewardRequestSync = events:FindFirstChild("RewardRequestSync")
+
+local openRewardsBtn = gameGui:WaitForChild("OpenRewardsBtn")
+local rewardsF = gameGui:WaitForChild("RewardsF")
+local leftTabs = rewardsF:WaitForChild("LeftTabs")
+
+local TAB_TO_CAT = {
+	PlaytimeBtn   = "playtime",
+	DailyBtn      = "daily",
+	GroupBtn      = "group",
+	SocialBtn     = "social",
+	VipDailyBtn   = "vipdaily",
+	RobuxSpentBtn = "robuxspent",
+}
+
+local lastPayload = nil
+
+local function setBadgeVisible(parentObj, visible)
+	if not parentObj then return end
+	local badge = parentObj:FindFirstChild("ReadyBadge")
+	if badge and badge:IsA("GuiObject") then
+		badge.Visible = visible == true
+	end
+end
+
+local function categoryHasReady(rows)
+	if type(rows) ~= "table" then return false end
+	for _, row in ipairs(rows) do
+		if type(row) == "table" and row.ready == true and row.claimed ~= true then
+			return true
+		end
+	end
+	return false
+end
+
+local function updateBadges(payload)
+	if type(payload) ~= "table" then return end
+	lastPayload = payload
+
+	local categories = payload.categories or payload
+	local anyReady = false
+
+	for btnName, cat in pairs(TAB_TO_CAT) do
+		local btn = leftTabs:FindFirstChild(btnName)
+		local hasReady = categoryHasReady(categories[cat])
+		setBadgeVisible(btn, hasReady)
+		if hasReady then
+			anyReady = true
+		end
+	end
+
+	setBadgeVisible(openRewardsBtn, anyReady)
+end
+
+RewardSync.OnClientEvent:Connect(function(payload)
+	updateBadges(payload)
+end)
+
+-- Optimistic refresh after claim click; server sync will finalize state.
+RewardClaim.OnClientEvent:Connect(function(payload)
+	if type(payload) == "table" then
+		updateBadges(payload)
+	elseif lastPayload then
+		updateBadges(lastPayload)
+	end
+end)
+
+-- Keep it fresh when player joins/open UI
+task.defer(function()
+	if RewardRequestSync and RewardRequestSync:IsA("RemoteEvent") then
+		RewardRequestSync:FireServer()
+	end
+end)
