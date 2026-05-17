@@ -45,7 +45,12 @@ local lastActionAt = {}
 
 local tables = {}
 local playerToSeat = {}
-
+local function isClientReady(player)
+	if _G.IsClientReady then
+		return _G.IsClientReady(player)
+	end
+	return true
+end
 local function canAct(player)
 	local now = os.clock()
 	local previous = lastActionAt[player.UserId] or 0
@@ -170,6 +175,9 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	if not chosenSlot then return false end
 
 	local seatState = tableState.seats[chosenSlot]
+	if not isClientReady(player) then
+		return false
+	end
 	lockSeated(humanoid, rootPart, seatState.part)
 
 	seatState.player = player
@@ -292,6 +300,9 @@ for _, child in ipairs(tablesFolder:GetChildren()) do
 end
 
 RequestSit.OnServerEvent:Connect(function(player, tableId, slot)
+	if not isClientReady(player) then
+		return
+	end
 	if not canAct(player) then return end
 	if getSeatRecord(player) then return end
 
@@ -310,7 +321,7 @@ RequestStand.OnServerEvent:Connect(function(player)
 end)
 Players.PlayerRemoving:Connect(function(player)
 	lastActionAt[player.UserId] = nil
-	standPlayer(player)
+	standPlayer(player, true)
 end)
 
 RunService.Heartbeat:Connect(function()
