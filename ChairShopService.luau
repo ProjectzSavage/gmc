@@ -52,7 +52,7 @@ local CHAIR_PRICES = {
 	Water=7000, Zap=12000, Radioactive=16000, Lava=20000, Demon=24000, Angel=30000,
 	Pure=50000, Void=50000,
 }
-
+_G.CHAIR_PRICES = CHAIR_PRICES
 local ShopChairs = RS:WaitForChild("Chairs"):WaitForChild("ShopChairs")
 local Podium = workspace:WaitForChild("ChairPodium")
 local Pads = {
