@@ -616,4 +616,4 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 end)
 
-print("[GameManager] Ready")
+print("[GameManager] Loaded. _G.OnBothSeated =", _G.OnBothSeated ~= nil)
