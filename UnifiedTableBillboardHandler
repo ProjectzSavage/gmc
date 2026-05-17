@@ -154,18 +154,12 @@ end
 -- Wait for every single model to finish before connecting ANY event
 if pending > 0 then allDone.Event:Wait() end
 
-local boardCount = 0
-for _ in pairs(board) do boardCount += 1 end
-print("[Billboard] Total in board:", boardCount)
-for k, v in pairs(board) do
-	print(" -", k, "| isBot:", v.isBot, "| countLbl:", v.countLbl ~= nil, "| countdownLbl:", v.countdownLbl ~= nil)
-end
+
 
 allDone:Destroy()
 
 -- Board is now fully populated
-print("[Billboard] Board ready, keys:")
-for k in pairs(board) do print(" -", k) end
+
 
 -- ── Snapshot for late join ─────────────────────────────────────
 if GetSeatSnapshot and GetSeatSnapshot:IsA("RemoteFunction") then
