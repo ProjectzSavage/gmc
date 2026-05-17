@@ -1,3 +1,4 @@
+-- ChairInventory v3 (stable viewport previews)
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -33,8 +34,39 @@ if not layout then
 	layout.Parent = Grid
 end
 
+local rebuildToken = 0
+local rebuildQueued = false
+local panelWasVisible = Panel.Visible
+local pendingRenderRefresh = false
+local viewportRefreshQueued = false
+local lastViewportRefresh = 0
+
 local function getChairModel(name)
 	return ShopChairs:FindFirstChild(name) or EquippableChairs:FindFirstChild(name)
+end
+
+local function sanitizeOwned(list)
+	if type(list) ~= "table" then return {} end
+	local out = {}
+	local seen = {}
+	for _, v in ipairs(list) do
+		if type(v) == "string" and v ~= "" and not seen[v] then
+			seen[v] = true
+			table.insert(out, v)
+			if #out >= 120 then break end
+		end
+	end
+	return out
+end
+
+local function mergeData(incoming)
+	if type(incoming) ~= "table" then return end
+	if type(incoming.owned) == "table" then
+		state.owned = sanitizeOwned(incoming.owned)
+	end
+	if type(incoming.equipped) == "string" and incoming.equipped ~= "" then
+		state.equipped = incoming.equipped
+	end
 end
 
 local function clearViewport(vp)
@@ -43,35 +75,66 @@ local function clearViewport(vp)
 	end
 end
 
+local function makePreviewClone(srcModel)
+	local clone = srcModel:Clone()
+
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("LuaSourceContainer")
+			or d:IsA("ProximityPrompt")
+			or d:IsA("Constraint")
+			or d:IsA("JointInstance")
+			or d:IsA("ParticleEmitter")
+			or d:IsA("Trail")
+			or d:IsA("Beam")
+			or d:IsA("Highlight") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.AssemblyLinearVelocity = Vector3.zero
+			d.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+
+	return clone
+end
+
 local function setupViewport(vp, chairName)
 	clearViewport(vp)
 
 	local model = getChairModel(chairName)
 	if not model then return end
 
-	local world = Instance.new("WorldModel")
-	world.Parent = vp
+	vp.BackgroundTransparency = 1
+	vp.BorderSizePixel = 0
+	vp.LightDirection = Vector3.new(-1, -1, -1)
+	vp.LightColor = Color3.fromRGB(255, 255, 255)
+	vp.Ambient = Color3.fromRGB(190, 190, 190)
 
-	local clone = model:Clone()
-	clone.Parent = world
-
-	for _, d in ipairs(clone:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.Anchored = true
-			d.CanCollide = false
-		end
-	end
-
+	-- Camera first, before anything is parented
 	local cam = Instance.new("Camera")
+	cam.FieldOfView = 35
 	cam.Parent = vp
 	vp.CurrentCamera = cam
 
+	local world = Instance.new("WorldModel")
+	world.Parent = vp
+
+	local clone = makePreviewClone(model)
+	clone.Parent = world
+	clone:PivotTo(CFrame.new(0, 0, 0))
+
 	local cf, size = clone:GetBoundingBox()
 	local center = cf.Position
-	local radius = math.max(size.X, size.Y, size.Z)
-	local dist = math.max(radius * 1.45, 3)
+	local radius = math.clamp(math.max(size.X, size.Y, size.Z), 1.2, 10)
+	local dist = radius * 2.0 + 1.5
+	local camPos = center + Vector3.new(dist, dist * 0.62, dist)
+	local lookAt = center + Vector3.new(0, math.clamp(size.Y * 0.12, 0.1, 1.2), 0)
+	cam.CFrame = CFrame.lookAt(camPos, lookAt)
 
-	cam.CFrame = CFrame.new(center + Vector3.new(dist, dist * 0.55, dist), center)
+	return cam, camPos, lookAt
 end
 
 local function updateGridLayout()
@@ -81,7 +144,6 @@ local function updateGridLayout()
 	local padding = 10
 	local columns
 
-	-- Force 2 columns on mobile so you don't get 1-per-row
 	if isMobile then
 		columns = 2
 	else
@@ -104,7 +166,6 @@ local function updateGridLayout()
 end
 
 local function styleRow(row)
-	local cellW = layout.CellSize.X.Offset
 	local cellH = layout.CellSize.Y.Offset
 
 	local vp = row:FindFirstChild("ViewportFrame")
@@ -116,6 +177,7 @@ local function styleRow(row)
 
 	vp.BackgroundTransparency = 1
 	vp.BorderSizePixel = 0
+	vp.ClipsDescendants = true
 	vp.Size = UDim2.new(1, -12, 0, math.floor(cellH * 0.62))
 	vp.Position = UDim2.fromOffset(6, 6)
 
@@ -134,21 +196,48 @@ local function styleRow(row)
 	end
 end
 
-local function sanitizeOwned(list)
-	if type(list) ~= "table" then return {} end
-	local out = {}
-	local seen = {}
-	for _, v in ipairs(list) do
-		if type(v) == "string" and v ~= "" and not seen[v] then
-			seen[v] = true
-			table.insert(out, v)
-			if #out >= 120 then break end
+local function renderRows(token)
+	for _, row in ipairs(Grid:GetChildren()) do
+		if row:IsA("Frame") and row.Name ~= "Template" then
+			local vp = row:FindFirstChild("ViewportFrame")
+			if vp then
+				setupViewport(vp, row.Name)
+			end
 		end
 	end
-	return out
-end
 
+	-- Delayed pass fixes occasional first-frame bad framing.
+
+end
+local function queueViewportRefresh()
+	if viewportRefreshQueued then return end
+	viewportRefreshQueued = true
+
+	task.delay(0.08, function()
+		viewportRefreshQueued = false
+
+		-- Skip if panel is hidden.
+		if not Panel.Visible then return end
+
+		-- Avoid hammering during tween.
+		local now = os.clock()
+		if now - lastViewportRefresh < 0.06 then return end
+		lastViewportRefresh = now
+
+		for _, row in ipairs(Grid:GetChildren()) do
+			if row:IsA("Frame") and row.Name ~= "Template" then
+				local vp = row:FindFirstChild("ViewportFrame")
+				if vp then
+					setupViewport(vp, row.Name)
+				end
+			end
+		end
+	end)
+end
 local function rebuildUI()
+	rebuildToken += 1
+	local token = rebuildToken
+
 	for _, child in ipairs(Grid:GetChildren()) do
 		if child:IsA("Frame") and child.Name ~= "Template" then
 			child:Destroy()
@@ -170,11 +259,6 @@ local function rebuildUI()
 			nameLbl.Text = chairName
 		end
 
-		local vp = row:FindFirstChild("ViewportFrame")
-		if vp then
-			setupViewport(vp, chairName)
-		end
-
 		local equipBtn = row:FindFirstChild("EquipBtn")
 		if equipBtn and equipBtn:IsA("TextButton") then
 			if state.equipped == chairName then
@@ -192,48 +276,118 @@ local function rebuildUI()
 		end
 	end
 
+	renderRows(token)
+
 	if Grid:IsA("ScrollingFrame") then
 		task.defer(function()
+			if token ~= rebuildToken then return end
 			Grid.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 12)
 		end)
 	end
 end
 
-local function mergeData(incoming)
-	if type(incoming) ~= "table" then return end
-	if type(incoming.owned) == "table" then
-		state.owned = sanitizeOwned(incoming.owned)
-	end
-	if type(incoming.equipped) == "string" and incoming.equipped ~= "" then
-		state.equipped = incoming.equipped
+local function queueRebuild()
+	if rebuildQueued then return end
+	rebuildQueued = true
+	task.defer(function()
+		rebuildQueued = false
+		rebuildUI()
+	end)
+end
+
+local function refreshViewports()
+	if not Panel.Visible then return end
+	for _, row in ipairs(Grid:GetChildren()) do
+		if row:IsA("Frame") and row.Name ~= "Template" then
+			local vp = row:FindFirstChild("ViewportFrame")
+			if vp then setupViewport(vp, row.Name) end
+		end
 	end
 end
 
-task.spawn(function()
-	local ok, data = pcall(function()
-		return RequestSync:InvokeServer()
+local function onPanelOpen()
+	-- Always request a fresh sync on open so equipped state is up to date
+	task.spawn(function()
+		local ok, data = pcall(function() return RequestSync:InvokeServer() end)
+		if ok and data then
+			mergeData(data)
+
+			-- If player owns nothing, give them Default so the grid isn't empty
+			if #state.owned == 0 then
+				state.owned = { "Default" }
+				state.equipped = "Default"
+			end
+
+			-- If equipped chair isn't in owned list somehow, reset to Default
+			local equippedOwned = false
+			for _, name in ipairs(state.owned) do
+				if name == state.equipped then equippedOwned = true; break end
+			end
+			if not equippedOwned then
+				state.equipped = "Default"
+				-- Tell server too
+				pcall(function() EquipChair:FireServer("Default") end)
+			end
+
+			queueRebuild()
+		end
 	end)
-	if ok then
+
+	-- Viewport refresh after open animation settles (0.45s = elastic anim duration)
+	task.delay(0.45, function()
+		if Panel.Visible then refreshViewports() end
+	end)
+end
+
+-- Initial data fetch on script start
+task.spawn(function()
+	local ok, data = pcall(function() return RequestSync:InvokeServer() end)
+	if ok and data then
 		mergeData(data)
-		rebuildUI()
+		if #state.owned == 0 then
+			state.owned = { "Default" }
+			state.equipped = "Default"
+		end
+		queueRebuild()
 	end
 end)
 
 ChairSync.OnClientEvent:Connect(function(data)
 	mergeData(data)
-	rebuildUI()
+	if not Panel.Visible then
+		pendingRenderRefresh = true
+		return
+	end
+	queueRebuild()
 end)
 
 Grid:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 	updateGridLayout()
 	for _, row in ipairs(Grid:GetChildren()) do
-		if row:IsA("Frame") and row.Name ~= "Template" then
-			styleRow(row)
-		end
+		if row:IsA("Frame") and row.Name ~= "Template" then styleRow(row) end
 	end
 	if Grid:IsA("ScrollingFrame") then
 		Grid.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 12)
 	end
+	if Panel.Visible then
+		task.defer(function() task.defer(refreshViewports) end)
+	end
+end)
+
+Panel:GetPropertyChangedSignal("Visible"):Connect(function()
+	if not Panel.Visible then
+		panelWasVisible = false
+		return
+	end
+	panelWasVisible = true
+
+	if pendingRenderRefresh then
+		pendingRenderRefresh = false
+		onPanelOpen()
+		return
+	end
+
+	onPanelOpen()
 end)
 
 layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
@@ -241,3 +395,26 @@ layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		Grid.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 12)
 	end
 end)
+
+-- Register with animator — pass onPanelOpen as the onOpen callback
+local openInvBtn = GameGui:FindFirstChild("OpenChairInvBtn")
+	or GameGui:FindFirstChild("OpenInventoryBtn")
+	or GameGui:FindFirstChild("OpenInvBtn")
+local closeInvBtn = Panel:FindFirstChild("CloseBtn")
+
+local t = 0
+while not _G.UIWindowAnimator and t < 5 do task.wait(0.1); t += 0.1 end
+
+if _G.UIWindowAnimator then
+	_G.UIWindowAnimator.register("inventory", Panel, openInvBtn, closeInvBtn, onPanelOpen)
+else
+	if openInvBtn then
+		openInvBtn.MouseButton1Click:Connect(function()
+			Panel.Visible = not Panel.Visible
+			if Panel.Visible then onPanelOpen() end
+		end)
+	end
+	if closeInvBtn then
+		closeInvBtn.MouseButton1Click:Connect(function() Panel.Visible = false end)
+	end
+end
