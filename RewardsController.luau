@@ -534,7 +534,7 @@ end
 
 RewardSync.OnClientEvent:Connect(function(newPayload)
 	if type(newPayload) ~= "table" then return end
-	print("[DEBUG] payload keys:")
+	--print("[DEBUG] payload keys:")
 	for k, v in pairs(newPayload) do
 		print(" -", k, "=", tostring(v))
 	end
