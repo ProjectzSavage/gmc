@@ -28,12 +28,12 @@ local TEXT = {
 }
 
 local TIERS = {
-	{ minCash = 0,      maxCash = 999,      robux = 9,   productId = 3593588962, label = "Street Pick" },
-	{ minCash = 1000,   maxCash = 4999,     robux = 19,  productId = 3593589199, label = "Night Snatch" },
-	{ minCash = 5000,   maxCash = 19999,    robux = 49,  productId = 3593589544, label = "Bank Swipe" },
-	{ minCash = 20000,  maxCash = 49999,    robux = 89,  productId = 3593589864, label = "Vault Crack" },
-	{ minCash = 50000,  maxCash = 99999,    robux = 129, productId = 3593590241, label = "Grand Heist" },
-	{ minCash = 100000, maxCash = 99999999, robux = 199, productId = 3593590575, label = "Legendary Raid" },
+	{ minCash = 0,      maxCash = 999,      robux = 9,   productId = 3594146537, label = "Street Pick" },
+	{ minCash = 1000,   maxCash = 4999,     robux = 19,  productId = 3594144490, label = "Night Snatch" },
+	{ minCash = 5000,   maxCash = 19999,    robux = 49,  productId = 3594142948, label = "Bank Swipe" },
+	{ minCash = 20000,  maxCash = 49999,    robux = 89,  productId = 3594147034, label = "Vault Crack" },
+	{ minCash = 50000,  maxCash = 99999,    robux = 129, productId = 3594143136, label = "Grand Heist" },
+	{ minCash = 100000, maxCash = 99999999, robux = 199, productId = 3594144009, label = "Legendary Raid" },
 }
 
 local pendingTarget = {}
