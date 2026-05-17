@@ -23,18 +23,18 @@ local SHOP = {
 	double_cash   = { kind = "gamepass",   id = 1841496309, perk = "DoubleCash" },
 	double_wins   = { kind = "gamepass",   id = 1841592323, perk = "DoubleWins" },
 
-	cash_300      = { kind = "devproduct", id = 3579858207, grant = { cash = 300 } },
-	cash_1000     = { kind = "devproduct", id = 3579859740, grant = { cash = 1000 } },
-	cash_2500     = { kind = "devproduct", id = 3579859866, grant = { cash = 2500 } },
-	cash_5000     = { kind = "devproduct", id = 3579860087, grant = { cash = 5000 } },
+	cash_300      = { kind = "devproduct", id = 3594141921, grant = { cash = 300 } },
+	cash_1000     = { kind = "devproduct", id = 3594140809, grant = { cash = 1000 } },
+	cash_2500     = { kind = "devproduct", id = 3594141403, grant = { cash = 2500 } },
+	cash_5000     = { kind = "devproduct", id = 3594142592, grant = { cash = 5000 } },
 
-	wins_10       = { kind = "devproduct", id = 3579860492, grant = { wins = 10 } },
-	wins_25       = { kind = "devproduct", id = 3579862556, grant = { wins = 25 } },
-	wins_50       = { kind = "devproduct", id = 3579862680, grant = { wins = 50 } },
-	wins_100      = { kind = "devproduct", id = 3579862815, grant = { wins = 100 } },
-	game_hint           = { kind = "devproduct", id = 3581498716, grant = { game_powerup = "hint" } },
-	game_reveal_country = { kind = "devproduct", id = 3581498875, grant = { game_powerup = "reveal_country" } },
-	game_reveal_letter  = { kind = "devproduct", id = 3581498810, grant = { game_powerup = "reveal_letter" } },
+	wins_10       = { kind = "devproduct", id = 3594139812, grant = { wins = 10 } },
+	wins_25       = { kind = "devproduct", id = 3594141145, grant = { wins = 25 } },
+	wins_50       = { kind = "devproduct", id = 3594142075, grant = { wins = 50 } },
+	wins_100      = { kind = "devproduct", id = 3594140262, grant = { wins = 100 } },
+	game_hint           = { kind = "devproduct", id = 3594143882, grant = { game_powerup = "hint" } },
+	game_reveal_country = { kind = "devproduct", id = 3594145422, grant = { game_powerup = "reveal_country" } },
+	game_reveal_letter  = { kind = "devproduct", id = 3594145940, grant = { game_powerup = "reveal_letter" } },
 }
 
 local PRODUCT_TO_KEY = {}
