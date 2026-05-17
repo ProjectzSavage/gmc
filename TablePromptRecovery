@@ -1,0 +1,54 @@
+local Players = game:GetService("Players")
+
+local function getNormalSeatedCount(tableState)
+	local c = 0
+	if tableState and tableState.seats then
+		if tableState.seats.A and tableState.seats.A.player then c += 1 end
+		if tableState.seats.B and tableState.seats.B.player then c += 1 end
+	end
+	return c
+end
+
+task.spawn(function()
+	while true do
+		task.wait(1)
+
+		-- Normal tables
+		if _G.SeatManager and _G.SeatManager.getAllTables then
+			local all = _G.SeatManager.getAllTables() or {}
+			for tableId, st in pairs(all) do
+				local seated = getNormalSeatedCount(st)
+
+				-- If table not full anymore, make sure prompt/lock are released
+				if seated < 2 then
+					if _G.SeatManager.setTableLocked then
+						_G.SeatManager.setTableLocked(tableId, false)
+					end
+					if _G.SeatManager.setTablePromptEnabled then
+						_G.SeatManager.setTablePromptEnabled(tableId, true)
+					end
+				end
+			end
+		end
+
+		-- Bot tables
+		if _G.BotSeatManager and _G.BotSeatManager.getTableModel and _G.BotSeatManager.setPromptEnabled then
+			local botFolder = workspace:FindFirstChild("BotTables")
+			if botFolder then
+				for _, m in ipairs(botFolder:GetChildren()) do
+					if m:IsA("Model") then
+						local p = nil
+						if _G.BotSeatManager.getPlayerForTable then
+							p = _G.BotSeatManager.getPlayerForTable(m.Name)
+						end
+						if not p then
+							_G.BotSeatManager.setPromptEnabled(m.Name, true)
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+print("[TablePromptRecovery] Ready")
