@@ -14,37 +14,67 @@ local EXCLUDE = {
 }
 
 local function getPrices()
-	return (_G.CHAIR_PRICES and type(_G.CHAIR_PRICES) == "table") and _G.CHAIR_PRICES or FALLBACK_PRICES
+	if type(_G.CHAIR_PRICES) == "table" then
+		return _G.CHAIR_PRICES
+	end
+	return FALLBACK_PRICES
 end
 
-local function updateChairLabel(chairModel)
-	if not chairModel or not chairModel:IsA("Model") then return end
+local function formatPrice(price)
+	if price >= 1000 then
+		local k = price / 1000
+		if math.floor(k) == k then
+			return tostring(math.floor(k)) .. "k"
+		end
+		return string.format("%.1fk", k)
+	end
+	return tostring(price)
+end
+
+local function updateChair(chairModel)
+	if not chairModel:IsA("Model") then return end
 	if EXCLUDE[chairModel.Name] then return end
 
 	local prices = getPrices()
 	local price = prices[chairModel.Name]
 	if not price then
-		warn("[ShopChairLabelSync] Missing price for:", chairModel.Name)
+		warn("[ShopChairLabelSync] Missing price for", chairModel.Name)
 		return
 	end
 
-	local ownedLbl = chairModel:FindFirstChild("OwnedLbl", true)
-	if not ownedLbl or not ownedLbl:IsA("TextLabel") then
-		warn("[ShopChairLabelSync] Missing OwnedLbl for:", chairModel.Name)
-		return
+	local updated = 0
+	for _, d in ipairs(chairModel:GetDescendants()) do
+		if d:IsA("TextLabel") and d.Name == "OwnedLbl" then
+			d.Text = "$" .. formatPrice(price)
+			updated += 1
+		end
 	end
 
-	ownedLbl.Text = "$" .. tostring(price)
+	if updated == 0 then
+		warn("[ShopChairLabelSync] No OwnedLbl found in", chairModel.Name)
+	end
 end
 
-for _, chair in ipairs(shopChairs:GetChildren()) do
-	updateChairLabel(chair)
+local function refreshAll()
+	for _, chair in ipairs(shopChairs:GetChildren()) do
+		updateChair(chair)
+	end
 end
+
+refreshAll()
 
 shopChairs.ChildAdded:Connect(function(chair)
 	task.defer(function()
-		updateChairLabel(chair)
+		updateChair(chair)
 	end)
+end)
+
+-- periodic healing in case models reinsert or scripts overwrite labels
+task.spawn(function()
+	while true do
+		task.wait(10)
+		refreshAll()
+	end
 end)
 
 print("[ShopChairLabelSync] Ready")
