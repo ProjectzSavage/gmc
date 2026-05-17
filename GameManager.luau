@@ -595,7 +595,21 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	local tableId = playerToTable[player.UserId]
 	if not tableId then return end
+	local function hardCancelSession(tableId, reason)
+		local session = sessions[tableId]
+		if not session then return end
 
+		session.active = false
+		session.ending = true
+		session.token += 1
+
+		if _G.SeatManager and _G.SeatManager.standPlayer then
+			if session.playerA then _G.SeatManager.standPlayer(session.playerA, true) end
+			if session.playerB then _G.SeatManager.standPlayer(session.playerB, true) end
+		end
+
+		clearSession(tableId)
+	end
 	local session = sessions[tableId]
 	if not session then
 		playerToTable[player.UserId] = nil
