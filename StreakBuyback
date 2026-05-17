@@ -1,0 +1,153 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+
+local events = RS:WaitForChild("Events")
+
+local function ensureEvent(name)
+	local e = events:FindFirstChild(name)
+	if e then return e end
+	e = Instance.new("RemoteEvent")
+	e.Name = name
+	e.Parent = events
+	return e
+end
+
+local StreakLostPrompt = ensureEvent("StreakLostPrompt")
+local StreakBuybackResult = ensureEvent("StreakBuybackResult")
+local NotifyPlayer = ensureEvent("NotifyPlayer")
+
+local OFFER_SECONDS = 30
+
+-- DEVPRODUCT IDS (must be productId, not passId)
+local TIERS = {
+	{ id = "small",  maxLost = 2,   productId = 3593665441, price = 9,  restorePercent = 1.00, label = "Small Save" },
+	{ id = "medium", maxLost = 8,   productId = 3593665744, price = 29, restorePercent = 1.00, label = "Medium Save" },
+	{ id = "large",  maxLost = 999, productId = 3593666030, price = 99, restorePercent = 1.00, label = "Large Save" },
+}
+
+local PRODUCT_TO_TIER = {}
+for _, t in ipairs(TIERS) do
+	if type(t.productId) == "number" and t.productId > 0 then
+		PRODUCT_TO_TIER[t.productId] = t
+	else
+		warn("[StreakBuyback] Missing/invalid productId for tier:", t.id)
+	end
+end
+
+local pending = {}
+
+local function getWinstreakValue(player)
+	local ls = player:FindFirstChild("leaderstats")
+	local ws = ls and ls:FindFirstChild("Winstreak")
+	if ws and ws:IsA("IntValue") then
+		return ws
+	end
+	return nil
+end
+
+local function pickTierForLost(lost)
+	for _, t in ipairs(TIERS) do
+		if lost <= t.maxLost then
+			return t
+		end
+	end
+	return TIERS[#TIERS]
+end
+
+local function beginOffer(player, lostAmount)
+	if lostAmount <= 0 then return end
+	local tier = pickTierForLost(lostAmount)
+	if not tier then return end
+
+	local expiresAt = os.time() + OFFER_SECONDS
+	pending[player.UserId] = {
+		lost = lostAmount,
+		tier = tier,
+		expiresAt = expiresAt,
+		used = false,
+	}
+
+	print("[StreakBuyback] Prompting", player.Name, "lost", lostAmount, "tier", tier.id)
+
+	StreakLostPrompt:FireClient(player, {
+		lost = lostAmount,
+		expiresAt = expiresAt,
+		tierName = tier.label,
+		price = tier.price,
+		productId = tier.productId,
+	})
+end
+
+local function grantRestore(player, offer)
+	if not offer or offer.used then return false end
+	if os.time() > offer.expiresAt then
+		offer.used = true
+		StreakBuybackResult:FireClient(player, { action = "expired" })
+		return false
+	end
+
+	local ws = getWinstreakValue(player)
+	if not ws then return false end
+
+	local restored = math.max(1, math.floor(offer.lost * offer.tier.restorePercent + 0.5))
+	ws.Value = math.max(ws.Value, restored)
+	offer.used = true
+
+	NotifyPlayer:FireClient(player, {
+		title = "Streak Restored",
+		message = "Restored to " .. tostring(restored),
+		kind = "success",
+		duration = 3,
+	})
+
+	StreakBuybackResult:FireClient(player, { action = "consumed" })
+	return true
+end
+
+local function watchPlayer(player)
+	local ws = getWinstreakValue(player)
+	if not ws then
+		warn("[StreakBuyback] Winstreak not found for", player.Name)
+		return
+	end
+
+	local last = ws.Value
+	ws:GetPropertyChangedSignal("Value"):Connect(function()
+		local now = ws.Value
+		if last > 0 and now == 0 then
+			beginOffer(player, last)
+		end
+		last = now
+	end)
+end
+
+Players.PlayerAdded:Connect(function(player)
+	task.delay(2, function()
+		watchPlayer(player)
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	pending[player.UserId] = nil
+end)
+
+_G.TryHandleStreakBuybackReceipt = function(receiptInfo, player)
+	local tier = PRODUCT_TO_TIER[receiptInfo.ProductId]
+	if not tier then
+		return false
+	end
+
+	local offer = pending[player.UserId]
+	if not offer or offer.used then
+		return true
+	end
+
+	if offer.tier.id ~= tier.id then
+		return true
+	end
+
+	grantRestore(player, offer)
+	return true
+end
+
+print("[StreakBuyback] Ready")
