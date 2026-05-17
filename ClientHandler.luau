@@ -61,12 +61,12 @@ local function setJumpLock(locked)
 	roundJumpLocked = (locked == true)
 
 	if roundJumpLocked then
-		-- Bind only when actually locking
 		if not jumpBound then
 			CAS:BindActionAtPriority(
 				JUMP_LOCK_ACTION,
 				function(_, state)
-					-- Sink jump entirely during a live round (2/2)
+					-- During round: consume default jump so character doesn't physically jump,
+					-- but we still handle stand logic via our own input hooks.
 					if state == Enum.UserInputState.Begin then
 						return Enum.ContextActionResult.Sink
 					end
@@ -78,7 +78,6 @@ local function setJumpLock(locked)
 			jumpBound = true
 		end
 	else
-		-- Unbind when unlocking — jump is fully free
 		if jumpBound then
 			CAS:UnbindAction(JUMP_LOCK_ACTION)
 			jumpBound = false
@@ -89,17 +88,12 @@ local function setJumpLock(locked)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if not hum then return end
 
-	if roundJumpLocked then
-		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
-		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
-		hum.Jump = false
-	else
-		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-		hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-		hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-		hum.JumpPower = 50
-		hum.JumpHeight = 7.2
-	end
+	-- Keep jump states enabled always to avoid sticky no-jump bug.
+	hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+	hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+	hum.JumpPower = 50
+	hum.JumpHeight = 7.2
 end
 
 local function recalcMyTableCount()
@@ -128,11 +122,18 @@ end
 -- Mobile and PC treated identically here — no special casing
 local function tryStandFromJump()
 	if not iAmSeated then return end
-	if roundJumpLocked then return end  -- game active: jump is suppressed by CAS, not stand
-	if os.clock() - seatedAt < 0.6 then return end  -- anti-accidental
+	if myTablePlayerCount >= 2 then return end
+
+	-- If you want jump-to-stand blocked during live round, keep this line:
+	if roundJumpLocked then return end
+
+	-- If you want jump-to-stand allowed even during live round, comment the line above.
+
+	if os.clock() - seatedAt < 0.45 then return end
 	local now = os.clock()
-	if now - lastStandRequestAt < 0.3 then return end
+	if now - lastStandRequestAt < 0.25 then return end
 	lastStandRequestAt = now
+
 	E.RequestStand:FireServer()
 end
 
@@ -256,9 +257,9 @@ local function syncMyTableCountFromSnapshot()
 	end)
 	if not ok or type(snap) ~= "table" then return end
 
-	local count = nil
-	if _G.ActiveBotTableId or tostring(myTableId):sub(1,4) == "BOT:" then
-		local id = tostring(myTableId):gsub("^BOT:", "")
+	local count
+	if tostring(myTableId):sub(1, 4) == "BOT:" then
+		local id = tostring(myTableId):sub(5)
 		count = snap.botTables and snap.botTables[id]
 	else
 		count = snap.tables and snap.tables[myTableId]
@@ -490,7 +491,8 @@ E.TableCountdown.OnClientEvent:Connect(function(a, b)
 	local n = tonumber(t)
 	if n and n > 0 then
 		countdownDone = false
-		setJumpLock(false)
+		-- block jump while countdown is active and table is full
+		setJumpLock(myTablePlayerCount >= 2)
 		hideAll()
 		return
 	end
@@ -515,7 +517,7 @@ E.BotTableCountdown.OnClientEvent:Connect(function(rawTableId, t)
 	local n = tonumber(t)
 	if n and n > 0 then
 		countdownDone = false
-		setJumpLock(false)
+		setJumpLock(true) -- bot table is effectively full when countdown starts
 		hideAll()
 		return
 	end
