@@ -1,0 +1,183 @@
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+
+local BOARD_CONFIG = {
+	{
+		modelName = "TopCashLeaderboard",
+		title = "Top Cash",
+		statName = "Cash",
+		store = DataStoreService:GetOrderedDataStore("GMC_LB_CASH_V1"),
+	},
+	{
+		modelName = "TopWinsLeaderboard",
+		title = "Top Wins",
+		statName = "Wins",
+		store = DataStoreService:GetOrderedDataStore("GMC_LB_WINS_V1"),
+	},
+	{
+		modelName = "TopStreaksLeaderboard",
+		title = "Top Streaks",
+		statName = "Winstreak",
+		store = DataStoreService:GetOrderedDataStore("GMC_LB_STREAK_V1"),
+	},
+}
+
+local REFRESH_SECONDS = 60
+local MAX_ROWS = 100
+
+local function getGuiRefs(modelName)
+	local model = workspace:FindFirstChild(modelName)
+	if not model then return nil end
+
+	local part = model:FindFirstChild("LeaderboardPart")
+	if not part then return nil end
+
+	local sgui = part:FindFirstChildOfClass("SurfaceGui")
+	if not sgui then return nil end
+
+	local root = sgui:FindFirstChild("Root")
+	if not root then return nil end
+
+	local list = root:FindFirstChild("ListScroll", true) or root:FindFirstChild("RowsScroll", true)
+	if not list or not list:IsA("ScrollingFrame") then return nil end
+
+	local template = list:FindFirstChild("RowTemplate")
+	if not template or not template:IsA("Frame") then return nil end
+
+	local title = root:FindFirstChild("Title", true)
+	return {
+		model = model,
+		part = part,
+		sgui = sgui,
+		root = root,
+		list = list,
+		template = template,
+		title = title,
+	}
+end
+
+local function clearRows(list, template)
+	for _, c in ipairs(list:GetChildren()) do
+		if c:IsA("Frame") and c ~= template then
+			c:Destroy()
+		end
+	end
+end
+
+local function safeNameFromUserId(userId)
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	return ok and name or ("User_" .. tostring(userId))
+end
+
+local function safeThumb(userId)
+	local ok, image = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	return ok and image or ""
+end
+
+local function renderBoard(cfg)
+	local refs = getGuiRefs(cfg.modelName)
+	if not refs then
+		warn("[LB] Missing gui refs for", cfg.modelName)
+		return
+	end
+
+	if refs.title and refs.title:IsA("TextLabel") then
+		refs.title.Text = cfg.title
+	end
+
+	clearRows(refs.list, refs.template)
+
+	local page
+	local ok, err = pcall(function()
+		page = cfg.store:GetSortedAsync(false, MAX_ROWS)
+	end)
+	if not ok or not page then
+		warn("[LB] GetSortedAsync failed:", cfg.modelName, err)
+		return
+	end
+
+	local rows = page:GetCurrentPage()
+	for rank, entry in ipairs(rows) do
+		local userId = tonumber(entry.key)
+		local value = tonumber(entry.value) or 0
+		if userId then
+			local row = refs.template:Clone()
+			row.Name = "Row_" .. tostring(rank)
+			row.Visible = true
+			row.LayoutOrder = rank
+			row.Parent = refs.list
+
+			local rankLbl = row:FindFirstChild("Rank")
+			local nameLbl = row:FindFirstChild("Name")
+			local valueLbl = row:FindFirstChild("Value")
+			local avatar = row:FindFirstChild("Avatar")
+
+			if rankLbl and rankLbl:IsA("TextLabel") then
+				rankLbl.Text = "#" .. tostring(rank)
+			end
+			if nameLbl and nameLbl:IsA("TextLabel") then
+				nameLbl.Text = safeNameFromUserId(userId)
+			end
+			if valueLbl and valueLbl:IsA("TextLabel") then
+				valueLbl.Text = tostring(value)
+			end
+			if avatar and avatar:IsA("ImageLabel") then
+				avatar.Image = safeThumb(userId)
+			end
+		end
+	end
+
+	refs.list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	refs.list.CanvasSize = UDim2.new(0, 0, 0, 0)
+end
+
+local function pushStatToBoard(player, statName)
+	local stats = player:FindFirstChild("leaderstats")
+	local stat = stats and stats:FindFirstChild(statName)
+	if not (stat and stat:IsA("IntValue")) then return end
+
+	for _, cfg in ipairs(BOARD_CONFIG) do
+		if cfg.statName == statName then
+			pcall(function()
+				cfg.store:SetAsync(tostring(player.UserId), stat.Value)
+			end)
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	player:WaitForChild("leaderstats", 20)
+	local stats = player:FindFirstChild("leaderstats")
+	if not stats then return end
+
+	for _, cfg in ipairs(BOARD_CONFIG) do
+		local stat = stats:FindFirstChild(cfg.statName)
+		if stat and stat:IsA("IntValue") then
+			pushStatToBoard(player, cfg.statName)
+			stat.Changed:Connect(function()
+				pushStatToBoard(player, cfg.statName)
+			end)
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		for _, cfg in ipairs(BOARD_CONFIG) do
+			renderBoard(cfg)
+		end
+		task.wait(REFRESH_SECONDS)
+	end
+end)
+
+game:BindToClose(function()
+	for _, p in ipairs(Players:GetPlayers()) do
+		for _, cfg in ipairs(BOARD_CONFIG) do
+			pushStatToBoard(p, cfg.statName)
+		end
+	end
+end)
