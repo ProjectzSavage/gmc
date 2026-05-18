@@ -10,16 +10,17 @@ local notifyEvent = events:WaitForChild("NotifyPlayer")
 local root = gameGui:WaitForChild("NotifyF")
 root.Visible = true
 root.AnchorPoint = Vector2.new(0.5, 0)
-root.Size = UDim2.new(0, 420, 0, 420)
+root.Size = UDim2.new(0.446, 0, 0.056, 0)
+root.Position = UDim2.new(0.5, 0, 0.56, 0) -- safe top position for mobile
 root.BackgroundTransparency = 1
 
 local function getTargetPosition()
+	-- keep on-screen for all devices
 	if _G and _G.ActiveBotTableId ~= nil then
-		return UDim2.new(0.5, 0, -0.05, 0)
+		return UDim2.fromScale(0.5, 0.56)
 	end
-	return UDim2.new(0.5, 0, 0.09, 0)
+	return UDim2.fromScale(0.5, 0.56)
 end
-
 local function refreshPosition()
 	local pos = getTargetPosition()
 	if typeof(pos) ~= "UDim2" then
@@ -57,13 +58,13 @@ local function newCard(title, msg, kind)
 	local accent = accentFor(kind)
 
 	local card = Instance.new("Frame")
-	card.Size = UDim2.new(1, 0, 0, 64)
+	card.Size = UDim2.new(1, 0, 0, 58)                                         -- card.Size = UDim2.new(1, 0, 0.115, 0)
 	card.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 	card.BackgroundTransparency = 0.08
 	card.Parent = root
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
+	corner.CornerRadius = UDim.new(0.18, 0)
 	corner.Parent = card
 
 	local stroke = Instance.new("UIStroke")
@@ -72,34 +73,34 @@ local function newCard(title, msg, kind)
 	stroke.Parent = card
 
 	local bar = Instance.new("Frame")
-	bar.Size = UDim2.new(0, 4, 1, -14)
-	bar.Position = UDim2.new(0, 8, 0, 7)
+	bar.Size = UDim2.new(0.012, 0, 0.98, 0)
+	bar.Position = UDim2.new(0.02, 0, 0.11, 0)
 	bar.BorderSizePixel = 0
 	bar.BackgroundColor3 = accent
 	bar.Parent = card
 
 	local barCorner = Instance.new("UICorner")
-	barCorner.CornerRadius = UDim.new(0, 3)
+	barCorner.CornerRadius = UDim.new(0.5, 0)
 	barCorner.Parent = bar
 
 	local titleLbl = Instance.new("TextLabel")
 	titleLbl.BackgroundTransparency = 1
-	titleLbl.Size = UDim2.new(1, -24, 0, 24)
-	titleLbl.Position = UDim2.new(0, 20, 0, 6)
+	titleLbl.Size = UDim2.new(0.9, 0, 0.16, 0)
+	titleLbl.Position = UDim2.new(0.07, 0, 0.08, 0)
 	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-	titleLbl.Font = Enum.Font.GothamBold
-	titleLbl.TextSize = 14
+	titleLbl.Font = Enum.Font.FredokaOne
+	titleLbl.TextScaled = true
 	titleLbl.TextColor3 = accent
 	titleLbl.Text = tostring(title or "Notification")
 	titleLbl.Parent = card
 
 	local msgLbl = Instance.new("TextLabel")
 	msgLbl.BackgroundTransparency = 1
-	msgLbl.Size = UDim2.new(1, -24, 0, 24)
-	msgLbl.Position = UDim2.new(0, 20, 0, 32)
+	msgLbl.Size = UDim2.new(0.9, 0, 0.36, 0)
+	msgLbl.Position = UDim2.new(0.07, 0, 0.48, 0)
 	msgLbl.TextXAlignment = Enum.TextXAlignment.Left
-	msgLbl.Font = Enum.Font.Gotham
-	msgLbl.TextSize = 13
+	msgLbl.Font = Enum.Font.FredokaOne
+	msgLbl.TextScaled = true
 	msgLbl.TextColor3 = Color3.fromRGB(226, 232, 240)
 	msgLbl.TextTruncate = Enum.TextTruncate.AtEnd
 	msgLbl.Text = tostring(msg or "")
