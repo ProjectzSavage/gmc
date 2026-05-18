@@ -1,0 +1,298 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+local ClaimTutorialReward = events:WaitForChild("ClaimTutorialReward")
+local SetTutorialComplete = events:WaitForChild("SetTutorialComplete")
+local TutorialTeleport = events:WaitForChild("TutorialTeleport")
+
+local RequestTutorialState = events:WaitForChild("RequestTutorialState")
+local RequestCanJoin1v1 = events:WaitForChild("RequestCanJoin1v1")
+
+local function make(className, props, parent)
+	local i = Instance.new(className)
+	for k, v in pairs(props or {}) do
+		i[k] = v
+	end
+	i.Parent = parent
+	return i
+end
+
+local gui = make("ScreenGui", {
+	Name = "TutorialGui",
+	IgnoreGuiInset = true,
+	ResetOnSpawn = false,
+	Enabled = false,
+}, playerGui)
+
+local dim = make("Frame", {
+	Name = "Dim",
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+	BackgroundTransparency = 0.4,
+}, gui)
+
+local card = make("Frame", {
+	Name = "Card",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.82),
+	Size = UDim2.fromScale(0.30, 0.28),
+	BackgroundColor3 = Color3.fromRGB(19, 25, 36),
+}, dim)
+make("UICorner", { CornerRadius = UDim.new(0.03, 0) }, card)
+make("UIStroke", { Color = Color3.fromRGB(80, 105, 145), Thickness = 1.6 }, card)
+
+local title = make("TextLabel", {
+	Name = "Title",
+	BackgroundTransparency = 1,
+	Position = UDim2.fromScale(0.04, 0.06),
+	Size = UDim2.fromScale(0.92, 0.16),
+	Font = Enum.Font.GothamBold,
+	TextScaled = true,
+	TextColor3 = Color3.fromRGB(240, 246, 255),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Text = "Welcome!",
+}, card)
+
+local body = make("TextLabel", {
+	Name = "Body",
+	BackgroundTransparency = 1,
+	Position = UDim2.fromScale(0.04, 0.22),
+	Size = UDim2.fromScale(0.92, 0.27),
+	Font = Enum.Font.Gotham,
+	TextScaled = true,
+	TextWrapped = true,
+	TextColor3 = Color3.fromRGB(210, 220, 240),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Text = "",
+}, card)
+
+local rewardRow = make("Frame", {
+	Name = "RewardRow",
+	BackgroundTransparency = 1,
+	Position = UDim2.fromScale(0.04, 0.52),
+	Size = UDim2.fromScale(0.92, 0.17),
+	Visible = false,
+}, card)
+
+local function makeRewardItem(parent, xPos, iconId, textValue, color)
+	local holder = make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromScale(xPos, 0),
+		Size = UDim2.fromScale(0.48, 1),
+	}, parent)
+
+	make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0.03, 0),
+	}, holder)
+
+	make("ImageLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(0.22, 0.9),
+		Image = "rbxassetid://" .. tostring(iconId),
+		ScaleType = Enum.ScaleType.Fit,
+	}, holder)
+
+	make("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(0.75, 1),
+		Font = Enum.Font.GothamBold,
+		TextScaled = true,
+		TextColor3 = color,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = textValue,
+	}, holder)
+end
+
+makeRewardItem(rewardRow, 0.00, 73475281808267, "+$200", Color3.fromRGB(115, 255, 140))
+makeRewardItem(rewardRow, 0.52, 118444404126569, "+1 Free Hint", Color3.fromRGB(120, 220, 255))
+
+local backBtn = make("TextButton", {
+	Name = "BackBtn",
+	Position = UDim2.fromScale(0.04, 0.84),
+	Size = UDim2.fromScale(0.2, 0.11),
+	Font = Enum.Font.GothamBold,
+	TextScaled = true,
+	TextColor3 = Color3.fromRGB(245, 245, 255),
+	Text = "Back",
+	BackgroundColor3 = Color3.fromRGB(72, 82, 104),
+	Visible = false,
+}, card)
+make("UICorner", { CornerRadius = UDim.new(0.2, 0) }, backBtn)
+
+local nextBtn = make("TextButton", {
+	Name = "NextBtn",
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.fromScale(0.96, 0.75),
+	Size = UDim2.fromScale(0.34, 0.18),
+	Font = Enum.Font.GothamBold,
+	TextScaled = true,
+	TextColor3 = Color3.fromRGB(245, 245, 255),
+	Text = "Next",
+	BackgroundColor3 = Color3.fromRGB(56, 124, 255),
+}, card)
+make("UICorner", { CornerRadius = UDim.new(0.2, 0) }, nextBtn)
+
+local stayBotBtn = make("TextButton", {
+	Name = "StayBotBtn",
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.fromScale(0.96, 0.84),
+	Size = UDim2.fromScale(0.34, 0.11),
+	Font = Enum.Font.GothamBold,
+	TextScaled = true,
+	TextColor3 = Color3.fromRGB(245, 245, 255),
+	Text = "Stay In Bot Mode",
+	BackgroundColor3 = Color3.fromRGB(56, 124, 255),
+	Visible = false,
+}, card)
+make("UICorner", { CornerRadius = UDim.new(0.2, 0) }, stayBotBtn)
+
+local go1v1Btn = make("TextButton", {
+	Name = "Go1v1Btn",
+	Position = UDim2.fromScale(0.04, 0.84),
+	Size = UDim2.fromScale(0.34, 0.11),
+	Font = Enum.Font.GothamBold,
+	TextScaled = true,
+	TextColor3 = Color3.fromRGB(245, 245, 255),
+	Text = "Go To 1v1",
+	BackgroundColor3 = Color3.fromRGB(38, 180, 95),
+	Visible = false,
+}, card)
+make("UICorner", { CornerRadius = UDim.new(0.2, 0) }, go1v1Btn)
+
+local step = 1
+local maxStep = 4
+
+local function lookAtPoint(pointName)
+	local folder = workspace:FindFirstChild("TutorialPoints")
+	local p = folder and folder:FindFirstChild(pointName)
+	if not p or not p:IsA("BasePart") then return end
+
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+
+	-- Camera goes behind the marker based on marker orientation.
+	local backDistance = 12
+	local height = 6
+	local lookForward = 18
+
+	local camPos = p.Position - (p.CFrame.LookVector * backDistance) + Vector3.new(0, height, 0)
+	local lookPos = p.Position + (p.CFrame.LookVector * lookForward)
+
+	cam.CameraType = Enum.CameraType.Scriptable
+	TweenService:Create(
+		cam,
+		TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ CFrame = CFrame.lookAt(camPos, lookPos) }
+	):Play()
+end
+
+local function releaseCamera()
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	cam.CameraType = Enum.CameraType.Custom
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then cam.CameraSubject = hum end
+end
+
+local function render()
+	backBtn.Visible = step > 1 and step < maxStep
+	nextBtn.Visible = step < maxStep
+	rewardRow.Visible = (step == 1)
+	stayBotBtn.Visible = (step == maxStep)
+	go1v1Btn.Visible = (step == maxStep)
+
+	if step == 1 then
+		title.Text = "Welcome!"
+		body.Text = "Instant reward to get started right now."
+	elseif step == 2 then
+		title.Text = "1v1 Tables"
+		body.Text = "These tables are for real players. Queue here when others are online."
+		lookAtPoint("LookAt1v1")
+	elseif step == 3 then
+		title.Text = "Bot Mode"
+		body.Text = "Practice solo anytime. Click Next and we will move you there."
+		lookAtPoint("LookAtBot")
+	elseif step == 4 then
+		title.Text = "Choose Your Path"
+		body.Text = "Stay in bot mode to practice, or go to 1v1 if players are active."
+		releaseCamera()
+
+		local ok, canJoin = pcall(function()
+			return RequestCanJoin1v1:InvokeServer()
+		end)
+		canJoin = ok and canJoin == true
+
+		go1v1Btn.Active = canJoin
+		go1v1Btn.AutoButtonColor = canJoin
+		go1v1Btn.BackgroundColor3 = canJoin and Color3.fromRGB(38, 180, 95) or Color3.fromRGB(95, 95, 95)
+		go1v1Btn.Text = canJoin and "Go To 1v1" or "Go To 1v1 (No players)"
+	end
+end
+local ok, state = pcall(function()
+	return RequestTutorialState:InvokeServer()
+end)
+if not ok or type(state) ~= "table" then
+	return
+end
+
+if state.completed then
+	completed=true
+	return
+end
+
+gui.Enabled = true
+render()
+
+if not state.rewardClaimed then
+	ClaimTutorialReward:FireServer()
+end
+nextBtn.Activated:Connect(function()
+	if step == 3 then
+		TutorialTeleport:FireServer("TeleportBot")
+	end
+	step = math.min(step + 1, maxStep)
+	render()
+end)
+
+backBtn.Activated:Connect(function()
+	step = math.max(step - 1, 1)
+	render()
+end)
+
+stayBotBtn.Activated:Connect(function()
+	SetTutorialComplete:FireServer()
+	gui.Enabled = false
+	releaseCamera()
+end)
+
+go1v1Btn.Activated:Connect(function()
+	if not go1v1Btn.Active then return end
+	TutorialTeleport:FireServer("Teleport1v1")
+	SetTutorialComplete:FireServer()
+	
+	gui.Enabled = false
+	releaseCamera()
+end)
+
+task.spawn(function()
+	-- Testing mode: always run tutorial each join
+	local _ok = pcall(function()
+		RequestTutorialState:InvokeServer()
+	end)
+
+	gui.Enabled = true
+	step = 1
+	render()
+
+	-- Reward once per join session (server handles anti-spam)
+	ClaimTutorialReward:FireServer()
+end)
