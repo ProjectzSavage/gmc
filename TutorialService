@@ -1,0 +1,181 @@
+-- TutorialService (first-time only, one-time reward, teleport helpers)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
+
+local STORE = DataStoreService:GetDataStore("GMC_Tutorial_V1")
+
+local events = ReplicatedStorage:FindFirstChild("Events")
+if not events then
+	events = Instance.new("Folder")
+	events.Name = "Events"
+	events.Parent = ReplicatedStorage
+end
+
+local function ensureRemoteEvent(name)
+	local r = events:FindFirstChild(name)
+	if r and r:IsA("RemoteEvent") then return r end
+	if r then r:Destroy() end
+	r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = events
+	return r
+end
+
+local function ensureRemoteFunction(name)
+	local r = events:FindFirstChild(name)
+	if r and r:IsA("RemoteFunction") then return r end
+	if r then r:Destroy() end
+	r = Instance.new("RemoteFunction")
+	r.Name = name
+	r.Parent = events
+	return r
+end
+
+local ClaimTutorialReward = ensureRemoteEvent("ClaimTutorialReward")
+local SetTutorialComplete = ensureRemoteEvent("SetTutorialComplete")
+local TutorialTeleport = ensureRemoteEvent("TutorialTeleport")
+
+local RequestTutorialState = ensureRemoteFunction("RequestTutorialState")
+local RequestCanJoin1v1 = ensureRemoteFunction("RequestCanJoin1v1")
+
+local cache = {}
+
+local function defaultData()
+	return {
+		completed = false,
+		rewardClaimed = false,
+	}
+end
+
+local function loadData(userId)
+	local key = "t_" .. tostring(userId)
+	local ok, data = pcall(function()
+		return STORE:GetAsync(key)
+	end)
+	if ok and type(data) == "table" then
+		return {
+			completed = data.completed == true,
+			rewardClaimed = data.rewardClaimed == true,
+		}
+	end
+	return defaultData()
+end
+
+local function saveData(userId)
+	local data = cache[userId]
+	if not data then return end
+	local key = "t_" .. tostring(userId)
+
+	pcall(function()
+		STORE:SetAsync(key, {
+			completed = data.completed == true,
+			rewardClaimed = data.rewardClaimed == true,
+		})
+	end)
+end
+
+local function addCash(player, amount)
+	local stats = player:FindFirstChild("leaderstats")
+	local cash = stats and stats:FindFirstChild("Cash")
+	if cash and cash:IsA("IntValue") then
+		cash.Value += amount
+	end
+end
+
+local function addHint(player, amount)
+	amount = amount or 1
+
+	-- Preferred: use your shared powerup grant hook if available.
+	if _G.GrantPowerup then
+		local ok = _G.GrantPowerup(player, "hint", amount)
+		if ok then return true end
+	end
+
+	-- Fallback to common stat names.
+	local stats = player:FindFirstChild("leaderstats")
+	local candidates = {
+		stats and stats:FindFirstChild("Hints"),
+		stats and stats:FindFirstChild("Hint"),
+		stats and stats:FindFirstChild("FreeHint"),
+		player:FindFirstChild("Hints"),
+		player:FindFirstChild("Hint"),
+		player:FindFirstChild("FreeHint"),
+	}
+
+	for _, v in ipairs(candidates) do
+		if v and v:IsA("IntValue") then
+			v.Value += amount
+			return true
+		end
+	end
+
+	return false
+end
+
+Players.PlayerAdded:Connect(function(player)
+	cache[player.UserId] = loadData(player.UserId)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	saveData(player.UserId)
+	cache[player.UserId] = nil
+end)
+
+RequestTutorialState.OnServerInvoke = function(player)
+	local data = cache[player.UserId]
+	if not data then
+		data = loadData(player.UserId)
+		cache[player.UserId] = data
+	end
+
+	return {
+		completed = data.completed == true,
+		rewardClaimed = data.rewardClaimed == true,
+	}
+end
+
+RequestCanJoin1v1.OnServerInvoke = function(player)
+	-- Simple condition: at least one other player in server.
+	local countOthers = 0
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			countOthers += 1
+		end
+	end
+	return countOthers >= 1
+end
+
+ClaimTutorialReward.OnServerEvent:Connect(function(player)
+	local data = cache[player.UserId]
+	if not data then return end
+	if data.rewardClaimed then return end
+
+	data.rewardClaimed = true
+	addCash(player, 200)
+	addHint(player, 1)
+	saveData(player.UserId)
+end)
+
+SetTutorialComplete.OnServerEvent:Connect(function(player)
+	local data = cache[player.UserId]
+	if not data then return end
+	if data.completed then return end
+
+	data.completed = true
+	saveData(player.UserId)
+end)
+
+TutorialTeleport.OnServerEvent:Connect(function(player, targetName)
+	local folder = workspace:FindFirstChild("TutorialPoints")
+	if not folder then return end
+
+	local point = folder:FindFirstChild(tostring(targetName))
+	if not point or not point:IsA("BasePart") then return end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	hrp.CFrame = point.CFrame + Vector3.new(0, 3, 0)
+end)
