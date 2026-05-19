@@ -25,6 +25,33 @@ local BOARD_CONFIG = {
 local REFRESH_SECONDS = 60
 local MAX_ROWS = 100
 
+local function formatAbbrev(n)
+	n = tonumber(n) or 0
+	local abs = math.abs(n)
+	if abs >= 1e12 then return string.format("%.1fT", n / 1e12):gsub("%.0T", "T") end
+	if abs >= 1e9 then return string.format("%.1fB", n / 1e9):gsub("%.0B", "B") end
+	if abs >= 1e6 then return string.format("%.1fM", n / 1e6):gsub("%.0M", "M") end
+	if abs >= 1e3 then return string.format("%.1fK", n / 1e3):gsub("%.0K", "K") end
+	return tostring(math.floor(n))
+end
+
+local function formatWithCommas(n)
+	n = tostring(math.floor(tonumber(n) or 0))
+	local left, num, right = n:match("^([^%d]*%d)(%d*)(.-)$")
+	return left .. (num:reverse():gsub("(%d%d%d)", "%1,"):reverse()) .. right
+end
+
+local function prettyValue(statName, value)
+	if statName == "Cash" then
+		return "$" .. formatAbbrev(value)
+	elseif statName == "Wins" then
+		return "🏆 " .. formatWithCommas(value)
+	elseif statName == "Winstreak" then
+		return "🔥 " .. formatWithCommas(value)
+	end
+	return tostring(value)
+end
+
 local function getGuiRefs(modelName)
 	local model = workspace:FindFirstChild(modelName)
 	if not model then return nil end
@@ -45,6 +72,7 @@ local function getGuiRefs(modelName)
 	if not template or not template:IsA("Frame") then return nil end
 
 	local title = root:FindFirstChild("Title", true)
+
 	return {
 		model = model,
 		part = part,
@@ -73,7 +101,11 @@ end
 
 local function safeThumb(userId)
 	local ok, image = pcall(function()
-		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+		return Players:GetUserThumbnailAsync(
+			userId,
+			Enum.ThumbnailType.HeadShot,
+			Enum.ThumbnailSize.Size100x100
+		)
 	end)
 	return ok and image or ""
 end
@@ -123,7 +155,7 @@ local function renderBoard(cfg)
 				nameLbl.Text = safeNameFromUserId(userId)
 			end
 			if valueLbl and valueLbl:IsA("TextLabel") then
-				valueLbl.Text = tostring(value)
+				valueLbl.Text = prettyValue(cfg.statName, value)
 			end
 			if avatar and avatar:IsA("ImageLabel") then
 				avatar.Image = safeThumb(userId)
