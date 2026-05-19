@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
 local RunService = game:GetService("RunService")
 
 local events = ReplicatedStorage:WaitForChild("Events")
@@ -7,6 +8,16 @@ local NotifyPlayer = events:WaitForChild("NotifyPlayer")
 
 local triggerPart = workspace:WaitForChild("LeaderboardNotifyPart")
 local inside = {}
+
+local STORES = {
+	cash = DataStoreService:GetOrderedDataStore("GMC_LB_CASH_V1"),
+	wins = DataStoreService:GetOrderedDataStore("GMC_LB_WINS_V1"),
+	streak = DataStoreService:GetOrderedDataStore("GMC_LB_STREAK_V1"),
+}
+
+local MAX_ROWS = 100
+local NOTIFY_COOLDOWN = 10
+local lastNotifyAt = {}
 
 local function kindFromBest(best)
 	if best == 1 then return "success" end
@@ -20,13 +31,6 @@ local function fmt(rank)
 	return ">100"
 end
 
-local function getRanks(player)
-	if _G.GetLeaderboardRanksForPlayer then
-		return _G.GetLeaderboardRanksForPlayer(player)
-	end
-	return nil
-end
-
 local function bestRank(r)
 	if not r then return nil end
 	local vals = {}
@@ -38,22 +42,42 @@ local function bestRank(r)
 	return vals[1]
 end
 
-local function showRankNotify(player)
-	local r = getRanks(player)
-	if not r then
-		NotifyPlayer:FireClient(player, {
-			title = "Your Leaderboard Rank",
-			message = "Ranks unavailable",
-			kind = "warn",
-			duration = 2.5,
-		})
-		return
-	end
+local function getRankInStore(store, userId)
+	local ok, pages = pcall(function()
+		return store:GetSortedAsync(false, MAX_ROWS)
+	end)
+	if not ok or not pages then return nil end
 
-	local b = bestRank(r)
+	local rows = pages:GetCurrentPage()
+	for rank, entry in ipairs(rows) do
+		if tonumber(entry.key) == userId then
+			return rank
+		end
+	end
+	return nil
+end
+
+local function getRanks(player)
+	local userId = player.UserId
+	return {
+		cash = getRankInStore(STORES.cash, userId),
+		wins = getRankInStore(STORES.wins, userId),
+		streak = getRankInStore(STORES.streak, userId),
+	}
+end
+
+local function showRankNotify(player)
+	local now = os.clock()
+	local prev = lastNotifyAt[player.UserId] or 0
+	if now - prev < NOTIFY_COOLDOWN then return end
+	lastNotifyAt[player.UserId] = now
+
+	local ranks = getRanks(player)
+	local b = bestRank(ranks)
+
 	NotifyPlayer:FireClient(player, {
 		title = "Your Leaderboard Rank",
-		message = "Cash " .. fmt(r.cash) .. " | Wins " .. fmt(r.wins) .. " | Streak " .. fmt(r.streak),
+		message = "Cash " .. fmt(ranks.cash) .. " | Wins " .. fmt(ranks.wins) .. " | Streak " .. fmt(ranks.streak),
 		kind = kindFromBest(b),
 		duration = 4,
 	})
@@ -62,6 +86,7 @@ end
 triggerPart.Touched:Connect(function(hit)
 	local character = hit and hit.Parent
 	if not character then return end
+
 	local player = Players:GetPlayerFromCharacter(character)
 	if not player then return end
 	if inside[player.UserId] then return end
@@ -89,4 +114,9 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
-print("[LeaderboardTouchNotify] Ready")
+Players.PlayerRemoving:Connect(function(player)
+	inside[player.UserId] = nil
+	lastNotifyAt[player.UserId] = nil
+end)
+
+print("[LeaderboardTouchNotify] Ready (GlobalLeaderboards)")
