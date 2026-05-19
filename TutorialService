@@ -83,21 +83,41 @@ local function addCash(player, amount)
 	end
 end
 
+local function waitForGrantHook(timeoutSec)
+	local deadline = os.clock() + (timeoutSec or 5)
+	while os.clock() < deadline do
+		if type(_G.GrantPowerup) == "function" then
+			return _G.GrantPowerup
+		end
+		task.wait(0.1)
+	end
+	return nil
+end
+
 local function addHint(player, amount)
 	amount = amount or 1
 
-	-- Preferred: use your shared powerup grant hook if available.
-	if _G.GrantPowerup then
-		local ok = _G.GrantPowerup(player, "hint", amount)
-		if ok then return true end
+	-- Preferred: powerup grant hook (wait briefly for service startup order)
+	local grant = waitForGrantHook(5)
+	if grant then
+		local ok, result = pcall(function()
+			return grant(player, "hint", amount)
+		end)
+		if ok and result then
+			return true
+		end
 	end
 
-	-- Fallback to common stat names.
+	-- Fallback stat names used in different versions
 	local stats = player:FindFirstChild("leaderstats")
 	local candidates = {
+		stats and stats:FindFirstChild("Magnifier"),
+		stats and stats:FindFirstChild("Magnifiers"),
 		stats and stats:FindFirstChild("Hints"),
 		stats and stats:FindFirstChild("Hint"),
 		stats and stats:FindFirstChild("FreeHint"),
+		player:FindFirstChild("Magnifier"),
+		player:FindFirstChild("Magnifiers"),
 		player:FindFirstChild("Hints"),
 		player:FindFirstChild("Hint"),
 		player:FindFirstChild("FreeHint"),
@@ -110,6 +130,7 @@ local function addHint(player, amount)
 		end
 	end
 
+	warn("[TutorialService] Failed to grant tutorial hint for", player.Name)
 	return false
 end
 
