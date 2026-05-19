@@ -32,7 +32,17 @@ for _, name in ipairs({
 	}) do
 	ensureEvent(name)
 end
+local function ensureFunction(name)
+	local fn = events:FindFirstChild(name)
+	if fn and fn:IsA("RemoteFunction") then return fn end
+	if fn then fn:Destroy() end
+	fn = Instance.new("RemoteFunction")
+	fn.Name = name
+	fn.Parent = events
+	return fn
+end
 
+local GetMySeatState = ensureFunction("GetMySeatState")
 local PlayerSat = events:WaitForChild("PlayerSat")
 local PlayerStood = events:WaitForChild("PlayerStood")
 local RequestSit = events:WaitForChild("RequestSit")
@@ -151,7 +161,25 @@ local function standPlayer(player, force)
 
 	return true
 end
+GetMySeatState.OnServerInvoke = function(player)
+	local rec = getSeatRecord(player)
+	if not rec then
+		return { seated = false }
+	end
 
+	local tableState = tables[rec.tableId]
+	if not tableState then
+		return { seated = false }
+	end
+
+	return {
+		seated = true,
+		tableId = rec.tableId,
+		slot = rec.slot,
+		seatAName = tableState.seats.A.player and tableState.seats.A.player.Name or nil,
+		seatBName = tableState.seats.B.player and tableState.seats.B.player.Name or nil,
+	}
+end
 local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	if getSeatRecord(player) then return false end
 
@@ -311,7 +339,6 @@ RequestSit.OnServerEvent:Connect(function(player, tableId, slot)
 		targetTable = closestAvailableTable(player)
 	end
 	if not targetTable then return end
-
 	trySeatPlayerAtTable(player, targetTable, slot)
 end)
 
