@@ -66,6 +66,7 @@ local E = {
 }
 
 local getSeatSnapshotRF = Events:FindFirstChild("GetSeatSnapshot")
+local GetMySeatState = Events:FindFirstChild("GetMySeatState")
 
 local CountryData = { ByLetter = {} }
 do
@@ -345,7 +346,21 @@ local function getSlotByName(name)
 	if myTableSeatNames.B == name then return "B" end
 	return nil
 end
+local function isStealPrompt(prompt)
+	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+	if prompt.Name == "StealPrompt" then return true end
+	if prompt:GetAttribute("IsStealPrompt") == true then return true end
+	if string.lower(prompt.ActionText or ""):find("steal") then return true end
+	return false
+end
 
+local function setLocalStealPromptsEnabled(enabled)
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if isStealPrompt(d) then
+			d.Enabled = (enabled == true)
+		end
+	end
+end
 local function setGuessingOverlay(t)
 	if F.BlurOverlay then
 		F.BlurOverlay.Visible = true
@@ -373,12 +388,40 @@ local function recalcMyTableCount()
 		setJumpLock(false)
 	end
 end
+local function recoverSeatState()
+	task.delay(1, recoverSeatState)
+	if not GetMySeatState or not GetMySeatState:IsA("RemoteFunction") then return end
 
+	local ok, data = pcall(function()
+		return GetMySeatState:InvokeServer()
+	end)
+	if not ok or type(data) ~= "table" or not data.seated then return end
+
+	iAmSeated = true
+	myTableId = tostring(data.tableId or "")
+	mySlot = data.slot
+	myTableSeatNames = {
+		A = data.seatAName,
+		B = data.seatBName,
+	}
+	seatedAt = os.clock()
+	lastStandRequestAt = 0
+	recalcMyTableCount()
+
+	setText(F.HUDSeat1, "A: " .. tostring(myTableSeatNames.A or "Empty"))
+	setText(F.HUDSeat2, "B: " .. tostring(myTableSeatNames.B or "Empty"))
+	setText(F.HUDStatus, tostring(myTablePlayerCount) .. " / 2 seated")
+
+	if mySlot then
+		CamGoWideShot(0.35)
+	end
+end
 local function forceUnlockRoundState()
 	countdownDone = false
 	pendingShowLetterPick = false
 	setJumpLock(false)
 	CamRelease()
+	setLocalStealPromptsEnabled(true)
 end
 
 local function hardUnlockMovementAndCamera()
@@ -726,6 +769,7 @@ if E.PlayerStood then
 			myTableId = nil
 			myTableSeatNames = { A = nil, B = nil }
 			myTablePlayerCount = 0
+			setLocalStealPromptsEnabled(true)
 
 			countdownDone = false
 			pendingShowLetterPick = false
@@ -758,6 +802,9 @@ if E.TableCountdown then
 
 		local n = tonumber(t)
 		if n and n > 0 then
+			if iAmSeated and myTablePlayerCount >= 2 then
+				setLocalStealPromptsEnabled(false)
+			end
 			countdownDone = false
 			setJumpLock(myTablePlayerCount >= 2)
 			hideAll()
@@ -767,6 +814,7 @@ if E.TableCountdown then
 		if iAmSeated then
 			countdownDone = true
 			setJumpLock(true)
+			setLocalStealPromptsEnabled(false)
 			if pendingShowLetterPick then
 				pendingShowLetterPick = false
 				openLetterPick()
@@ -792,6 +840,7 @@ if E.BotTableCountdown then
 
 		if iAmSeated then
 			countdownDone = true
+			setLocalStealPromptsEnabled(true)
 			setJumpLock(true)
 			if pendingShowLetterPick then
 				pendingShowLetterPick = false
@@ -1085,6 +1134,7 @@ if E.GameOver then
 		hideAll()
 		hardUnlockMovementAndCamera()
 		forceUnlockRoundState()
+		setLocalStealPromptsEnabled(true)
 
 		local winner = (data and data.winner) or "Unknown"
 
@@ -1117,6 +1167,7 @@ if E.ResetAll then
 
 		hardUnlockMovementAndCamera()
 		forceUnlockRoundState()
+		setLocalStealPromptsEnabled(true)
 	end)
 end
 
@@ -1149,6 +1200,7 @@ player.CharacterAdded:Connect(function(char)
 	task.wait(0.2)
 	setJumpLock(false)
 	hookHumanoidUnlock(char)
+	task.delay(1, recoverSeatState) -- add this
 end)
 
 player.CharacterAdded:Connect(function()
