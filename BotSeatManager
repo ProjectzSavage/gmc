@@ -26,6 +26,18 @@ local botTablesFolder = workspace:WaitForChild("BotTables")
 local botTables = {}
 local playerToTable = {}
 local lockedPlayers = {}
+local ACTION_COOLDOWN = 0.18
+local lastActionAt = {}
+
+local function canAct(player)
+	local now = os.clock()
+	local prev = lastActionAt[player.UserId] or 0
+	if now - prev < ACTION_COOLDOWN then
+		return false
+	end
+	lastActionAt[player.UserId] = now
+	return true
+end
 
 local function toSharedBotId(tableId)
 	return "BOT:" .. tostring(tableId)
@@ -114,13 +126,25 @@ local function standPlayer(player, force)
 end
 
 local function sitPlayer(player, tableId)
-	if playerToTable[player.UserId] then return false end
+	local existing = playerToTable[player.UserId]
+	if existing then
+		local old = botTables[existing]
+		if not old or old.player ~= player then
+			playerToTable[player.UserId] = nil
+			lockedPlayers[player.UserId] = nil
+		else
+			return false
+		end
+	end
+
 	local st = botTables[tableId]
+	if playerToTable[player.UserId] then return false end
+	
 	if not st or st.player or not st.promptEnabled then return false end
 
-	local char = player.Character
-	local h = char and char:FindFirstChildOfClass("Humanoid")
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local char = player.Character or player.CharacterAdded:Wait()
+	local h = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 2)
+	local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 2)
 	if not h or not hrp then return false end
 
 	lockSeated(h, hrp, st.seatPart)
@@ -186,6 +210,7 @@ local function registerTable(model)
 	st.prompt = prompt
 
 	prompt.Triggered:Connect(function(player)
+		if not canAct(player) then return end
 		sitPlayer(player, model.Name)
 	end)
 end
@@ -201,6 +226,7 @@ RequestStand.OnServerEvent:Connect(function(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	lastActionAt[player.UserId] = nil
 	standPlayer(player, true)
 end)
 
