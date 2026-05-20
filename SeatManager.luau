@@ -1,7 +1,8 @@
 -- Multi-table SeatManager for Workspace.Tables
 -- Debug build: leave DEBUG = true until seat issue is confirmed fixed.
 local DEBUG = false
-
+local CLIENT_READY_GRACE_SECONDS = 10
+local joinAt = {}
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -86,20 +87,20 @@ local function canAct(player)
 end
 
 local function isClientReadyOrGrace(player)
-	if _G.IsClientReady then
-		local okReady = _G.IsClientReady(player)
-		if okReady then
-			return true
-		end
+	if _G.IsClientReady and _G.IsClientReady(player) then
+		return true
 	end
 
-	local t0 = joinAt[player.UserId] or 0
-	local age = os.clock() - t0
-	local allowByGrace = age >= CLIENT_READY_GRACE_SECONDS
-	if not allowByGrace then
-		dprint("Client not ready yet:", player.Name, "age", string.format("%.2f", age))
+	local joined = joinAt[player.UserId] or os.clock()
+	local age = os.clock() - joined
+
+	if age >= CLIENT_READY_GRACE_SECONDS then
+		warn("[SeatManager] Allowing seat by grace for", player.Name, "age", age)
+		return true
 	end
-	return allowByGrace
+
+	warn("[SeatManager] Blocking seat: client not ready", player.Name, "age", age)
+	return false
 end
 
 local function restoreMovement(humanoid, rootPart)
@@ -216,7 +217,6 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	end
 
 	if not isClientReadyOrGrace(player) then
-		dprint("Seat blocked: client not ready/grace:", player.Name)
 		return false
 	end
 
@@ -386,7 +386,6 @@ RequestSit.OnServerEvent:Connect(function(player, tableId, slot)
 	dprint("RequestSit:", player.Name, "table:", tostring(tableId), "slot:", tostring(slot))
 
 	if not isClientReadyOrGrace(player) then
-		dprint("RequestSit blocked (ready/grace):", player.Name)
 		return
 	end
 	if not canAct(player) then return end
