@@ -1,4 +1,4 @@
--- RewardsController (full rewrite, stable subtitle + robux spent text)
+-- local SOCIAL_DEVS = {(full rewrite, stable subtitle + robux spent text)
 print("[RewardsController] Starting...")
 
 local Players = game:GetService("Players")
@@ -24,7 +24,9 @@ local Events = RS:WaitForChild("Events")
 local RewardSync = Events:WaitForChild("RewardSync")
 local RewardClaim = Events:WaitForChild("RewardClaim")
 local RewardRequestSync = Events:WaitForChild("RewardRequestSync")
-
+local hasAutoOpenedDaily = false
+local hasAutoOpenedPlaytime = false
+local autoOpenMode = nil
 local TAB_TO_CAT = {
 	PlaytimeBtn = "playtime",
 	DailyBtn = "daily",
@@ -44,8 +46,8 @@ local CAT_TITLE = {
 }
 
 local SOCIAL_DEVS = {
-	{ username = "bymyego", userId = 0 },
-	{ username = "secondDev", userId = 0 },
+	{ username = "TheCoolBaconHairIsMe", userId = 3107183806 },
+	{ username = "YurisMatrix", userId = 3721585498 },
 }
 
 local REWARD_IMAGES = {
@@ -111,13 +113,39 @@ local IMAGE_CONFIG = {
 
 local payload = nil
 local activeCat = "playtime"
-
+local pendingAutoTour = false
+local autoTourStarted = false
 local playtimeSeconds = 0
 local dailyCountdown = 0
 local lastTick = tick()
 local updateConn = nil
 local rowPageState = {}
+local function hardHideRewards()
+	root.Visible = false
+	root.Active = false
+	root.Selectable = false
+	rowsScroll.ScrollingEnabled = false
 
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			d.Active = false
+			d.Selectable = false
+		end
+	end
+end
+
+local function hardShowRewards()
+	root.Visible = true
+	root.Active = true
+	root.Selectable = true
+	rowsScroll.ScrollingEnabled = true
+
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			d.Active = true
+		end
+	end
+end
 local function formatTime(seconds)
 	seconds = math.max(0, math.floor(seconds))
 	local h = math.floor(seconds / 3600)
@@ -490,7 +518,25 @@ local function selectCategory(cat)
 	activeCat = cat
 	render()
 end
+local function openRewardsTo(cat)
+	hardShowRewards()
+	selectCategory(cat)
+	requestSync()
+end
 
+local function startJoinRewardTour()
+	if autoTourStarted then return end
+	if not payload then
+		pendingAutoTour = true
+		requestSync()
+		return
+	end
+
+	autoTourStarted = true
+	hasAutoOpenedDaily = true
+	autoOpenMode = "daily"
+	openRewardsTo("daily")
+end
 for btnName, cat in pairs(TAB_TO_CAT) do
 	local btn = leftTabs:FindFirstChild(btnName)
 	if btn and btn:IsA("TextButton") then
@@ -501,15 +547,41 @@ for btnName, cat in pairs(TAB_TO_CAT) do
 end
 
 local function onOpen()
-	root.Visible = true
+	autoOpenMode = nil
+	hardShowRewards()
 	requestSync()
 	render()
 end
-
 local function onClose()
-	root.Visible = false
 	stopLiveUpdater()
+
+	-- force it non-interactive immediately, even if animator only fades it
+	hardHideRewards()
+
+	if autoOpenMode == "daily" and not hasAutoOpenedPlaytime then
+		hasAutoOpenedPlaytime = true
+		autoOpenMode = "playtime"
+
+		task.delay(0.6, function()
+			openRewardsTo("playtime")
+		end)
+	else
+		autoOpenMode = nil
+	end
 end
+task.spawn(function()
+	local rf = game:GetService("ReplicatedFirst")
+	local finished = rf:FindFirstChild("LoadingFinished")
+
+	if finished and finished:IsA("BindableEvent") then
+		finished.Event:Wait()
+	else
+		task.wait(5)
+	end
+
+	task.wait(8)
+	startJoinRewardTour()
+end)
 
 local t = 0
 while not _G.UIWindowAnimator and t < 5 do
@@ -517,32 +589,55 @@ while not _G.UIWindowAnimator and t < 5 do
 	t += 0.1
 end
 
-if _G.UIWindowAnimator and _G.UIWindowAnimator.register then
-	_G.UIWindowAnimator.register("rewards", root, openBtn, closeBtn)
-	openBtn.MouseButton1Click:Connect(onOpen)
-	closeBtn.MouseButton1Click:Connect(onClose)
-else
-	openBtn.MouseButton1Click:Connect(function()
-		if root.Visible then
-			onClose()
-		else
-			onOpen()
-		end
-	end)
-	closeBtn.MouseButton1Click:Connect(onClose)
-end
+openBtn.MouseButton1Click:Connect(function()
+	if root.Visible then
+		onClose()
+	else
+		onOpen()
+	end
+end)
+
+closeBtn.MouseButton1Click:Connect(onClose)
 
 RewardSync.OnClientEvent:Connect(function(newPayload)
 	if type(newPayload) ~= "table" then return end
-	--print("[DEBUG] payload keys:")
-	for k, v in pairs(newPayload) do
-		print(" -", k, "=", tostring(v))
-	end
+
 	payload = newPayload
 	render()
-end)
 
-root.Visible = false
+	if pendingAutoTour and not autoTourStarted then
+		pendingAutoTour = false
+		task.defer(startJoinRewardTour)
+	end
+end)
+local TweenService = game:GetService("TweenService")
+
+local questF = gameGui:WaitForChild("DailyQuestsF")
+local toggleBtn = questF:WaitForChild("ToggleBtn")
+
+local openPos = UDim2.new(0.76, 0, 0.025, 0)
+local closedPos = UDim2.new(0.98, 0, 0.025, 0)
+
+local isOpen = true
+questF.Position = openPos
+
+local function setQuestOpen(open)
+	isOpen = open
+
+	local target = open and openPos or closedPos
+	toggleBtn.Text = open and ">" or "<"
+
+	TweenService:Create(
+		questF,
+		TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = target }
+	):Play()
+end
+
+toggleBtn.MouseButton1Click:Connect(function()
+	setQuestOpen(not isOpen)
+end)
+hardHideRewards()
 requestSync()
 render()
 print("[RewardsController] Ready")
