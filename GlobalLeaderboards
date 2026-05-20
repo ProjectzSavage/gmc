@@ -1,20 +1,28 @@
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local events = ReplicatedStorage:WaitForChild("Events")
+local NotifyPlayer = events:WaitForChild("NotifyPlayer")
 
 local BOARD_CONFIG = {
 	{
+		guiName = "CashLeaderboard",
 		modelName = "TopCashLeaderboard",
 		title = "Top Cash",
 		statName = "Cash",
 		store = DataStoreService:GetOrderedDataStore("GMC_LB_CASH_V1"),
 	},
 	{
+		guiName = "WinsLeaderboard",
 		modelName = "TopWinsLeaderboard",
 		title = "Top Wins",
 		statName = "Wins",
 		store = DataStoreService:GetOrderedDataStore("GMC_LB_WINS_V1"),
 	},
 	{
+		guiName = "StreaksLeaderboard",
 		modelName = "TopStreaksLeaderboard",
 		title = "Top Streaks",
 		statName = "Winstreak",
@@ -22,8 +30,33 @@ local BOARD_CONFIG = {
 	},
 }
 
-local REFRESH_SECONDS = 60
+local REFRESH_SECONDS = 45
 local MAX_ROWS = 100
+local nextRefreshAt = os.time() + REFRESH_SECONDS
+
+-- Weekly reward section:
+-- Fill this with winners manually each week.
+local WEEKLY_STREAK_WINNER_USERIDS = {
+	-- 123456789,
+	-- 987654321,
+}
+local WEEKLY_STREAK_CHAIR_NAME = "Rainbow"
+
+local rankMaps = {
+	cash = {},
+	wins = {},
+	streak = {},
+}
+
+local nameCache = {}
+local thumbCache = {}
+
+local function rankColor(rank)
+	if rank == 1 then return Color3.fromRGB(255, 210, 75) end
+	if rank == 2 then return Color3.fromRGB(210, 210, 220) end
+	if rank == 3 then return Color3.fromRGB(205, 140, 80) end
+	return Color3.fromRGB(235, 235, 245)
+end
 
 local function formatAbbrev(n)
 	n = tonumber(n) or 0
@@ -52,17 +85,57 @@ local function prettyValue(statName, value)
 	return tostring(value)
 end
 
-local function getGuiRefs(modelName)
+local function safeNameFromUserId(userId)
+	if nameCache[userId] then return nameCache[userId] end
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	local final = ok and name or ("User_" .. tostring(userId))
+	nameCache[userId] = final
+	return final
+end
+
+local function safeThumb(userId)
+	if thumbCache[userId] then return thumbCache[userId] end
+	local ok, image = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	local final = ok and image or ""
+	thumbCache[userId] = final
+	return final
+end
+
+local function getLeaderboardPart(modelName)
 	local model = workspace:FindFirstChild(modelName)
 	if not model then return nil end
-
 	local part = model:FindFirstChild("LeaderboardPart")
-	if not part then return nil end
+	if part and part:IsA("BasePart") then return part end
+	return nil
+end
 
-	local sgui = part:FindFirstChildOfClass("SurfaceGui")
-	if not sgui then return nil end
+local function getBoardInstances(cfg)
+	local boards = {}
 
-	local root = sgui:FindFirstChild("Root")
+	local starterBoard = StarterGui:FindFirstChild(cfg.guiName, true)
+	if starterBoard and starterBoard:IsA("SurfaceGui") then
+		table.insert(boards, starterBoard)
+	end
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		local pg = plr:FindFirstChild("PlayerGui")
+		if pg then
+			local board = pg:FindFirstChild(cfg.guiName, true)
+			if board and board:IsA("SurfaceGui") then
+				table.insert(boards, board)
+			end
+		end
+	end
+
+	return boards
+end
+
+local function getGuiRefs(surfaceGui)
+	local root = surfaceGui:FindFirstChild("Root")
 	if not root then return nil end
 
 	local list = root:FindFirstChild("ListScroll", true) or root:FindFirstChild("RowsScroll", true)
@@ -74,9 +147,6 @@ local function getGuiRefs(modelName)
 	local title = root:FindFirstChild("Title", true)
 
 	return {
-		model = model,
-		part = part,
-		sgui = sgui,
 		root = root,
 		list = list,
 		template = template,
@@ -92,74 +162,73 @@ local function clearRows(list, template)
 	end
 end
 
-local function safeNameFromUserId(userId)
-	local ok, name = pcall(function()
-		return Players:GetNameFromUserIdAsync(userId)
-	end)
-	return ok and name or ("User_" .. tostring(userId))
-end
+local function fetchRows(cfg)
+	local out = {}
+	local rankMap = {}
 
-local function safeThumb(userId)
-	local ok, image = pcall(function()
-		return Players:GetUserThumbnailAsync(
-			userId,
-			Enum.ThumbnailType.HeadShot,
-			Enum.ThumbnailSize.Size100x100
-		)
+	local ok, pages = pcall(function()
+		return cfg.store:GetSortedAsync(false, MAX_ROWS)
 	end)
-	return ok and image or ""
-end
-
-local function renderBoard(cfg)
-	local refs = getGuiRefs(cfg.modelName)
-	if not refs then
-		warn("[LB] Missing gui refs for", cfg.modelName)
-		return
+	if not ok or not pages then
+		warn("[LB] GetSortedAsync failed:", cfg.guiName)
+		return out, rankMap
 	end
+
+	for rank, item in ipairs(pages:GetCurrentPage()) do
+		local userId = tonumber(item.key)
+		local value = tonumber(item.value) or 0
+		if userId then
+			rankMap[userId] = rank
+			table.insert(out, {
+				rank = rank,
+				userId = userId,
+				value = value,
+				name = safeNameFromUserId(userId),
+				thumb = safeThumb(userId),
+			})
+		end
+	end
+
+	return out, rankMap
+end
+
+local function renderIntoBoard(boardGui, cfg, rows)
+	local refs = getGuiRefs(boardGui)
+	if not refs then return end
 
 	if refs.title and refs.title:IsA("TextLabel") then
 		refs.title.Text = cfg.title
 	end
 
 	clearRows(refs.list, refs.template)
+	refs.template.Visible = false
 
-	local page
-	local ok, err = pcall(function()
-		page = cfg.store:GetSortedAsync(false, MAX_ROWS)
-	end)
-	if not ok or not page then
-		warn("[LB] GetSortedAsync failed:", cfg.modelName, err)
-		return
-	end
+	for _, entry in ipairs(rows) do
+		local row = refs.template:Clone()
+		row.Name = "Row_" .. tostring(entry.rank)
+		row.Visible = true
+		row.LayoutOrder = entry.rank
+		row.Parent = refs.list
 
-	local rows = page:GetCurrentPage()
-	for rank, entry in ipairs(rows) do
-		local userId = tonumber(entry.key)
-		local value = tonumber(entry.value) or 0
-		if userId then
-			local row = refs.template:Clone()
-			row.Name = "Row_" .. tostring(rank)
-			row.Visible = true
-			row.LayoutOrder = rank
-			row.Parent = refs.list
+		local rankLbl = row:FindFirstChild("Rank")
+		local nameLbl = row:FindFirstChild("Name")
+		local valueLbl = row:FindFirstChild("Value")
+		local avatar = row:FindFirstChild("Avatar")
 
-			local rankLbl = row:FindFirstChild("Rank")
-			local nameLbl = row:FindFirstChild("Name")
-			local valueLbl = row:FindFirstChild("Value")
-			local avatar = row:FindFirstChild("Avatar")
-
-			if rankLbl and rankLbl:IsA("TextLabel") then
-				rankLbl.Text = "#" .. tostring(rank)
-			end
-			if nameLbl and nameLbl:IsA("TextLabel") then
-				nameLbl.Text = safeNameFromUserId(userId)
-			end
-			if valueLbl and valueLbl:IsA("TextLabel") then
-				valueLbl.Text = prettyValue(cfg.statName, value)
-			end
-			if avatar and avatar:IsA("ImageLabel") then
-				avatar.Image = safeThumb(userId)
-			end
+		if rankLbl and rankLbl:IsA("TextLabel") then
+			rankLbl.Text = "#" .. tostring(entry.rank)
+			rankLbl.TextColor3 = rankColor(entry.rank)
+		end
+		if nameLbl and nameLbl:IsA("TextLabel") then
+			nameLbl.Text = entry.name
+			nameLbl.TextColor3 = rankColor(entry.rank)
+		end
+		if valueLbl and valueLbl:IsA("TextLabel") then
+			valueLbl.Text = prettyValue(cfg.statName, entry.value)
+			valueLbl.TextColor3 = rankColor(entry.rank)
+		end
+		if avatar and avatar:IsA("ImageLabel") then
+			avatar.Image = entry.thumb
 		end
 	end
 
@@ -181,6 +250,84 @@ local function pushStatToBoard(player, statName)
 	end
 end
 
+local function renderBoard(cfg)
+	local rows, map = fetchRows(cfg)
+
+	if cfg.statName == "Cash" then
+		rankMaps.cash = map
+	elseif cfg.statName == "Wins" then
+		rankMaps.wins = map
+	elseif cfg.statName == "Winstreak" then
+		rankMaps.streak = map
+	end
+
+	local boards = getBoardInstances(cfg)
+	local adorneePart = getLeaderboardPart(cfg.modelName)
+
+	for _, board in ipairs(boards) do
+		if adorneePart then
+			board.Adornee = adorneePart
+		end
+		renderIntoBoard(board, cfg, rows)
+	end
+end
+
+local function refreshAllBoards()
+	for _, cfg in ipairs(BOARD_CONFIG) do
+		renderBoard(cfg)
+	end
+	nextRefreshAt = os.time() + REFRESH_SECONDS
+end
+
+_G.GetLeaderboardRanksForPlayer = function(player)
+	if not player then return nil end
+	return {
+		cash = rankMaps.cash[player.UserId],
+		wins = rankMaps.wins[player.UserId],
+		streak = rankMaps.streak[player.UserId],
+	}
+end
+
+-- Weekly reward hook:
+-- Call this manually from command bar if needed:
+-- _G.GrantWeeklyStreakWinners()
+_G.GrantWeeklyStreakWinners = function()
+	for _, userId in ipairs(WEEKLY_STREAK_WINNER_USERIDS) do
+		local plr = Players:GetPlayerByUserId(userId)
+		if plr and _G.ChairGrantToPlayer then
+			_G.ChairGrantToPlayer(plr, WEEKLY_STREAK_CHAIR_NAME, "Weekly streak winner chair unlocked!")
+		end
+	end
+	print("[LB] Weekly streak winners processed")
+end
+
+-- Countdown label on CountdownPart -> BillboardGui -> TimerLbl
+local function timerLabel()
+	local part = workspace:FindFirstChild("LeaderboardResetPart") or workspace:FindFirstChild("CountdownPart")
+	if not part or not part:IsA("BasePart") then return nil end
+
+	local bb = part:FindFirstChildWhichIsA("BillboardGui")
+	if not bb then return nil end
+
+	local lbl = bb:FindFirstChild("TimerLbl", true)
+	if lbl and lbl:IsA("TextLabel") then return lbl end
+
+	lbl = bb:FindFirstChildWhichIsA("TextLabel", true)
+	if lbl and lbl:IsA("TextLabel") then return lbl end
+	return nil
+end
+
+task.spawn(function()
+	while true do
+		local lbl = timerLabel()
+		if lbl then
+			local left = math.max(0, nextRefreshAt - os.time())
+			lbl.Text = "Refresh in: " .. tostring(left) .. "s"
+		end
+		task.wait(1)
+	end
+end)
+
 Players.PlayerAdded:Connect(function(player)
 	player:WaitForChild("leaderstats", 20)
 	local stats = player:FindFirstChild("leaderstats")
@@ -195,13 +342,44 @@ Players.PlayerAdded:Connect(function(player)
 			end)
 		end
 	end
+
+	task.delay(2, function()
+		if player.Parent then
+			refreshAllBoards()
+		end
+	end)
 end)
+
+-- Winstreak rank prompt part:
+-- Workspace.WinstreakRankPart should contain/accept a ProximityPrompt
+local rankPart = workspace:FindFirstChild("WinstreakRankPart")
+if rankPart and rankPart:IsA("BasePart") then
+	local prompt = rankPart:FindFirstChildOfClass("ProximityPrompt")
+	if not prompt then
+		prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "Check Rank"
+		prompt.ObjectText = "Winstreak Rank"
+		prompt.HoldDuration = 0
+		prompt.MaxActivationDistance = 12
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = rankPart
+	end
+
+	prompt.Triggered:Connect(function(player)
+		local rank = rankMaps.streak[player.UserId]
+		local msg = rank and ("Your Winstreak Rank: #" .. tostring(rank)) or "Your Winstreak Rank: >100"
+		NotifyPlayer:FireClient(player, {
+			title = "Winstreak Rank",
+			message = msg,
+			kind = rank and (rank <= 3 and "success" or "info") or "warn",
+			duration = 3,
+		})
+	end)
+end
 
 task.spawn(function()
 	while true do
-		for _, cfg in ipairs(BOARD_CONFIG) do
-			renderBoard(cfg)
-		end
+		refreshAllBoards()
 		task.wait(REFRESH_SECONDS)
 	end
 end)
@@ -213,3 +391,5 @@ game:BindToClose(function()
 		end
 	end
 end)
+
+print("[GlobalLeaderboards] Ready")
