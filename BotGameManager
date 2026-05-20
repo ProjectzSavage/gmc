@@ -65,13 +65,16 @@ local function awardBotWin(player)
 		local mult = _G.RewardsCashMultiplier and _G.RewardsCashMultiplier(player) or 1
 		cash.Value += BOT_REWARDS.Cash * mult
 	end
+
 	if wins and wins:IsA("IntValue") then
 		wins.Value += BOT_REWARDS.Wins
 	end
+
 	if streak and streak:IsA("IntValue") then
 		local mult = _G.RewardsStreakMultiplier and _G.RewardsStreakMultiplier(player) or 1
 		streak.Value += BOT_REWARDS.Winstreak * mult
 	end
+	print("[BotReward]", player.Name, "cashMult", _G.RewardsCashMultiplier and _G.RewardsCashMultiplier(player), "streakMult", _G.RewardsStreakMultiplier and _G.RewardsStreakMultiplier(player))
 end
 
 local function resetStreak(player)
