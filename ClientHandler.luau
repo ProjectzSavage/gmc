@@ -4,13 +4,7 @@ local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
 local CAS = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
-task.delay(3, function()
-	local ev = RS:FindFirstChild("Events")
-	local ready = ev and ev:FindFirstChild("ClientReady")
-	if ready and ready:IsA("RemoteEvent") then
-		ready:FireServer({ source = "ClientHandlerFallback", at = os.clock() })
-	end
-end)
+
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
@@ -820,7 +814,12 @@ if E.TableCountdown then
 				openLetterPick()
 			end
 		else
-			forceUnlockRoundState()
+			recoverSeatState()
+			task.delay(0.2, function()
+				if not iAmSeated then
+					forceUnlockRoundState()
+				end
+			end)
 		end
 	end)
 end
@@ -904,6 +903,10 @@ end
 
 if E.ShowLetterPick then
 	E.ShowLetterPick.OnClientEvent:Connect(function()
+		if not iAmSeated then
+			recoverSeatState()
+			task.wait(0.15)
+		end
 		if not iAmSeated then return end
 
 		if not countdownDone then
@@ -1212,5 +1215,27 @@ player.CharacterAdded:Connect(function()
 	end
 	CamRelease(0.2)
 end)
+local function signalClientReady()
+	local ready = Events:FindFirstChild("ClientReady")
+	if ready and ready:IsA("RemoteEvent") then
+		ready:FireServer({
+			source = "ClientHandler",
+			at = os.clock(),
+			frames = _G.Frames ~= nil,
+			camera = true,
+		})
+	end
+end
 
+signalClientReady()
+
+task.delay(1, function()
+	signalClientReady()
+	recoverSeatState()
+end)
+
+task.delay(3, function()
+	signalClientReady()
+	recoverSeatState()
+end)
 print("[ClientHandler] Ready - " .. player.Name)
