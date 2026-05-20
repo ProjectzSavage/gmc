@@ -69,6 +69,7 @@ local REWARDS = {
 	WinCash = 200,
 	WinIncrease = 1,
 	WinstreakIncrease = 1,
+	
 }
 
 local function awardWinner(player)
@@ -81,13 +82,15 @@ local function awardWinner(player)
 	local winstreak = stats:FindFirstChild("Winstreak")
 
 	if cash and cash:IsA("IntValue") then
-		cash.Value += REWARDS.WinCash
+		local mult = _G.RewardsCashMultiplier and _G.RewardsCashMultiplier(player) or 1
+		cash.Value += REWARDS.WinCash * mult
 	end
 	if wins and wins:IsA("IntValue") then
 		wins.Value += REWARDS.WinIncrease
 	end
 	if winstreak and winstreak:IsA("IntValue") then
-		winstreak.Value += REWARDS.WinstreakIncrease
+		local mult = _G.RewardsStreakMultiplier and _G.RewardsStreakMultiplier(player) or 1
+		winstreak.Value += REWARDS.WinstreakIncrease * mult
 	end
 end
 
