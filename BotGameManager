@@ -62,13 +62,15 @@ local function awardBotWin(player)
 	local streak = stats:FindFirstChild("Winstreak")
 
 	if cash and cash:IsA("IntValue") then
-		cash.Value += BOT_REWARDS.Cash
+		local mult = _G.RewardsCashMultiplier and _G.RewardsCashMultiplier(player) or 1
+		cash.Value += BOT_REWARDS.Cash * mult
 	end
 	if wins and wins:IsA("IntValue") then
 		wins.Value += BOT_REWARDS.Wins
 	end
 	if streak and streak:IsA("IntValue") then
-		streak.Value += BOT_REWARDS.Winstreak
+		local mult = _G.RewardsStreakMultiplier and _G.RewardsStreakMultiplier(player) or 1
+		streak.Value += BOT_REWARDS.Winstreak * mult
 	end
 end
 
