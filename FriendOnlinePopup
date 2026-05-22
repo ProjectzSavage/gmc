@@ -1,4 +1,4 @@
--- FriendOnlinePopupController (scale layout)
+-- FriendOnlinePopupController v3 (scale layout + anti-spam + test button)
 print("[FriendOnlinePopup] Starting...")
 
 local Players = game:GetService("Players")
@@ -13,10 +13,22 @@ local POPUP_NAME = "FriendOnlinePopup"
 local POPUP_SECONDS = 12
 local REWARD_TEXT = "+$50 CASH"
 
-local popup, titleLbl, closeBtn, avatarImg, rewardLbl, inviteBtn, countdownFill, countdownText
+local POLL_INTERVAL = 15
+local GLOBAL_POPUP_COOLDOWN = 90
+local PER_FRIEND_COOLDOWN = 1200
+local MAX_POPUPS_PER_SESSION = 6
+local MAX_QUEUE_SIZE = 6
+
+local popup, titleLbl, closeBtn, avatarImg, rewardLbl, inviteBtn, countdownFill, countdownText, testBtn
 local countdownConn = nil
+
 local knownOnline = {}
-local shownOnce = {}
+local queuedById = {}
+local queue = {}
+
+local lastPopupAt = 0
+local popupCount = 0
+local lastShownByFriend = {}
 
 local function makeCornerScale(inst, scaleRadius)
 	local c = Instance.new("UICorner")
@@ -34,14 +46,14 @@ local function makeStroke(inst, color, thickness)
 end
 
 local function createGui()
-	local existing = gameGui:FindFirstChild(POPUP_NAME)
-	if existing then existing:Destroy() end
+	local old = gameGui:FindFirstChild(POPUP_NAME)
+	if old then old:Destroy() end
 
 	popup = Instance.new("Frame")
 	popup.Name = POPUP_NAME
 	popup.AnchorPoint = Vector2.new(0.5, 0)
 	popup.Position = UDim2.fromScale(0.5, -0.24)
-	popup.Size = UDim2.fromScale(0.62, 0.21)
+	popup.Size = UDim2.fromScale(0.42, 0.21)
 	popup.BackgroundColor3 = Color3.fromRGB(52, 60, 84)
 	popup.BackgroundTransparency = 0.08
 	popup.Visible = false
@@ -157,6 +169,21 @@ local function createGui()
 	countdownText.Text = ""
 	countdownText.ZIndex = 52
 	countdownText.Parent = popup
+
+	testBtn = Instance.new("TextButton")
+	testBtn.Name = "TestPopupBtn"
+	testBtn.AnchorPoint = Vector2.new(1, 1)
+	testBtn.Position = UDim2.fromScale(0.985, 0.985)
+	testBtn.Size = UDim2.fromScale(0.12, 0.05)
+	testBtn.BackgroundColor3 = Color3.fromRGB(20, 28, 42)
+	testBtn.TextColor3 = Color3.fromRGB(230, 240, 255)
+	testBtn.Text = "Test Popup"
+	testBtn.TextScaled = true
+	testBtn.Font = Enum.Font.GothamBold
+	testBtn.ZIndex = 48
+	testBtn.Parent = gameGui
+	makeCornerScale(testBtn, 0.25)
+	makeStroke(testBtn, Color3.fromRGB(92, 130, 220), 1.5)
 end
 
 local function setAvatar(userId)
@@ -171,6 +198,7 @@ local function hidePopup()
 		countdownConn:Disconnect()
 		countdownConn = nil
 	end
+
 	if popup and popup.Visible then
 		local tw = TweenService:Create(
 			popup,
@@ -184,12 +212,17 @@ local function hidePopup()
 end
 
 local function showPopup(friendName, friendUserId)
+	lastPopupAt = tick()
+	popupCount += 1
+	lastShownByFriend[friendUserId] = tick()
+
 	titleLbl.Text = string.format("%s is online!", friendName)
 	rewardLbl.Text = REWARD_TEXT
 	setAvatar(friendUserId)
 
 	popup.Position = UDim2.fromScale(0.5, -0.24)
 	popup.Visible = true
+
 	TweenService:Create(
 		popup,
 		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
@@ -218,8 +251,38 @@ local function fetchFriendsOnline()
 	local ok, list = pcall(function()
 		return player:GetFriendsOnline(200)
 	end)
-	if not ok or type(list) ~= "table" then return {} end
+	if not ok or type(list) ~= "table" then
+		return {}
+	end
 	return list
+end
+
+local function enqueueFriend(name, userId)
+	if queuedById[userId] then return end
+	if #queue >= MAX_QUEUE_SIZE then return end
+	queuedById[userId] = true
+	table.insert(queue, { name = name, userId = userId })
+end
+
+local function canShow(userId)
+	local now = tick()
+	if popupCount >= MAX_POPUPS_PER_SESSION then return false end
+	if (now - lastPopupAt) < GLOBAL_POPUP_COOLDOWN then return false end
+	local prev = lastShownByFriend[userId] or 0
+	if (now - prev) < PER_FRIEND_COOLDOWN then return false end
+	return true
+end
+
+local function tryShowFromQueue()
+	if popup.Visible then return end
+	if #queue == 0 then return end
+
+	local item = table.remove(queue, 1)
+	queuedById[item.userId] = nil
+
+	if canShow(item.userId) then
+		showPopup(item.name, item.userId)
+	end
 end
 
 local function bootstrapPresence()
@@ -235,21 +298,18 @@ local function pollForNewOnlineFriend()
 	local nowOnline = {}
 
 	for _, entry in ipairs(list) do
-		if entry.IsOnline and entry.VisitorId then
-			nowOnline[entry.VisitorId] = true
-
-			local wasOnline = knownOnline[entry.VisitorId] == true
-			local alreadyShown = shownOnce[entry.VisitorId] == true
-
-			if not wasOnline and not alreadyShown and not popup.Visible then
-				shownOnce[entry.VisitorId] = true
-				showPopup(entry.UserName or "Friend", entry.VisitorId)
-				break
+		local uid = entry.VisitorId
+		if entry.IsOnline and uid then
+			nowOnline[uid] = true
+			local wasOnline = knownOnline[uid] == true
+			if not wasOnline then
+				enqueueFriend(entry.UserName or "Friend", uid)
 			end
 		end
 	end
 
 	knownOnline = nowOnline
+	tryShowFromQueue()
 end
 
 createGui()
@@ -262,12 +322,16 @@ end)
 
 closeBtn.MouseButton1Click:Connect(hidePopup)
 
+testBtn.MouseButton1Click:Connect(function()
+	showPopup("PopupTestUser", player.UserId)
+end)
+
 bootstrapPresence()
 
 task.spawn(function()
 	while true do
 		pollForNewOnlineFriend()
-		task.wait(15)
+		task.wait(POLL_INTERVAL)
 	end
 end)
 
