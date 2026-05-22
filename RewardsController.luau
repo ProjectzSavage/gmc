@@ -1,30 +1,32 @@
--- RewardsController v3
+-- RewardsController v8
 print("[RewardsController] Starting...")
 
-local Players      = game:GetService("Players")
-local RunService   = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local RS           = game:GetService("ReplicatedStorage")
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local TweenService  = game:GetService("TweenService")
+local SocialService = game:GetService("SocialService")
+local RS            = game:GetService("ReplicatedStorage")
 
 local player  = Players.LocalPlayer
 local gui     = player:WaitForChild("PlayerGui")
 local gameGui = gui:WaitForChild("GameGui")
 
-local openBtn  = gameGui:WaitForChild("OpenRewardsBtn")
-local root     = gameGui:WaitForChild("RewardsF")
-local closeBtn = root:WaitForChild("CloseBtn")
+local openBtn   = gameGui:WaitForChild("OpenRewardsBtn")
+local root      = gameGui:WaitForChild("RewardsF")
+local closeBtn  = root:WaitForChild("CloseBtn")
 
-local leftTabs   = root:WaitForChild("LeftTabs")
-local content    = root:WaitForChild("Content")
-local titleLbl   = content:WaitForChild("CategoryTitle")
-local subLbl     = content:WaitForChild("CategorySubtitle")
-local rowsScroll = content:WaitForChild("RowsScroll")
-local rowTemplate= rowsScroll:WaitForChild("RowTemplate")
+local leftTabs    = root:WaitForChild("LeftTabs")
+local content     = root:WaitForChild("Content")
+local titleLbl    = content:WaitForChild("CategoryTitle")
+local subLbl      = content:WaitForChild("CategorySubtitle")
+local rowsScroll  = content:WaitForChild("RowsScroll")
+local rowTemplate = rowsScroll:WaitForChild("RowTemplate")
 
-local Events            = RS:WaitForChild("Events")
-local RewardSync        = Events:WaitForChild("RewardSync")
-local RewardClaim       = Events:WaitForChild("RewardClaim")
-local RewardRequestSync = Events:WaitForChild("RewardRequestSync")
+local Events             = RS:WaitForChild("Events")
+local RewardSync         = Events:WaitForChild("RewardSync")
+local RewardClaim        = Events:WaitForChild("RewardClaim")
+local RewardRequestSync  = Events:WaitForChild("RewardRequestSync")
+local SocialVisit        = Events:WaitForChild("SocialVisit")
 
 local TAB_TO_CAT = {
 	PlaytimeBtn   = "playtime",
@@ -34,6 +36,7 @@ local TAB_TO_CAT = {
 	VipDailyBtn   = "vipdaily",
 	RobuxSpentBtn = "robuxspent",
 }
+
 local CAT_TITLE = {
 	playtime   = "Playtime Rewards",
 	daily      = "Daily Rewards",
@@ -42,10 +45,12 @@ local CAT_TITLE = {
 	vipdaily   = "VIP Daily Rewards",
 	robuxspent = "Robux Spent Rewards",
 }
+
 local SOCIAL_DEVS = {
 	{ username = "TheCoolBaconHairIsMe", userId = 3107183806 },
 	{ username = "YurisMatrix",          userId = 3721585498 },
 }
+
 local REWARD_IMAGES = {
 	["cash_200"]    = "rbxassetid://73475281808267",
 	["cash_250"]    = "rbxassetid://95709817514797",
@@ -72,6 +77,7 @@ local REWARD_IMAGES = {
 	["time_5min"]   = "rbxassetid://134246698110119",
 	["time_15min"]  = "rbxassetid://74897415127747",
 }
+
 local REWARD_PATTERNS = {
 	{ pattern = "+%$200",       image = "cash_200" },
 	{ pattern = "+%$250",       image = "cash_250" },
@@ -98,6 +104,7 @@ local REWARD_PATTERNS = {
 	{ pattern = "x2 5min",      image = "time_5min" },
 	{ pattern = "x2 15min",     image = "time_15min" },
 }
+
 local IMAGE_CONFIG = {
 	DISPLAY_SIZE  = 64,
 	IMAGE_SPACING = 8,
@@ -105,17 +112,74 @@ local IMAGE_CONFIG = {
 	ARROW_GAP     = 6,
 }
 
--- ── State ──────────────────────────────────────────────────────
-local payload         = nil
-local activeCat       = "playtime"
-local playtimeSeconds = 0
-local dailyCountdown  = 0
-local lastTick        = tick()
-local updateConn      = nil
-local rowPageState    = {}
-local autoTourStarted = false
+local payload             = nil
+local activeCat           = "playtime"
+local playtimeSeconds     = 0
+local dailyCountdown      = 0
+local lastTick            = tick()
+local updateConn          = nil
+local rowPageState        = {}
 
--- ── Helpers ────────────────────────────────────────────────────
+local autoTourStarted     = false
+local hasAutoOpenedPlay   = false
+local autoOpenMode        = nil
+local pendingOpenCategory = nil
+local isRewardsOpen       = false
+
+local DEFAULT_SCROLLBAR_TRANSPARENCY = rowsScroll.ScrollBarImageTransparency
+local defaultVisuals = {}
+
+local function captureVisualDefaults()
+	defaultVisuals = {}
+
+	local function capture(obj)
+		local d = {}
+		if obj:IsA("GuiObject") then
+			d.Visible = obj.Visible
+			d.BackgroundTransparency = obj.BackgroundTransparency
+		end
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+			d.TextTransparency = obj.TextTransparency
+			d.TextStrokeTransparency = obj.TextStrokeTransparency
+		end
+		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+			d.ImageTransparency = obj.ImageTransparency
+		end
+		if obj:IsA("ScrollingFrame") then
+			d.ScrollBarImageTransparency = obj.ScrollBarImageTransparency
+		end
+		defaultVisuals[obj] = d
+	end
+
+	capture(root)
+	for _, obj in ipairs(root:GetDescendants()) do
+		capture(obj)
+	end
+end
+
+local function restoreVisualDefaults()
+	for obj, d in pairs(defaultVisuals) do
+		if obj and obj.Parent then
+			if d.Visible ~= nil then obj.Visible = d.Visible end
+			if d.BackgroundTransparency ~= nil and obj:IsA("GuiObject") then
+				obj.BackgroundTransparency = d.BackgroundTransparency
+			end
+			if d.TextTransparency ~= nil and (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then
+				obj.TextTransparency = d.TextTransparency
+			end
+			if d.TextStrokeTransparency ~= nil and (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")) then
+				obj.TextStrokeTransparency = d.TextStrokeTransparency
+			end
+			if d.ImageTransparency ~= nil and (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) then
+				obj.ImageTransparency = d.ImageTransparency
+			end
+			if d.ScrollBarImageTransparency ~= nil and obj:IsA("ScrollingFrame") then
+				obj.ScrollBarImageTransparency = d.ScrollBarImageTransparency
+			end
+		end
+	end
+end
+
 local function formatTime(seconds)
 	seconds = math.max(0, math.floor(seconds))
 	local h = math.floor(seconds / 3600)
@@ -126,19 +190,79 @@ end
 
 local function requestSync()
 	if RewardRequestSync:IsA("RemoteFunction") then
-		pcall(function() RewardRequestSync:InvokeServer() end)
+		pcall(function()
+			RewardRequestSync:InvokeServer()
+		end)
 	elseif RewardRequestSync:IsA("RemoteEvent") then
 		RewardRequestSync:FireServer()
 	end
 end
 
-local function clearRows()
-	for _, c in ipairs(rowsScroll:GetChildren()) do
-		if c:IsA("Frame") and c ~= rowTemplate then c:Destroy() end
+local function stopLiveUpdater()
+	if updateConn then
+		updateConn:Disconnect()
+		updateConn = nil
 	end
 end
 
-local function styleClaim(btn, row)
+local function setRewardsOpenState(isOpen)
+	isRewardsOpen = isOpen
+
+	if isOpen then
+		restoreVisualDefaults()
+
+		root.Visible = true
+		root.Active = true
+
+		rowsScroll.Visible = true
+		rowsScroll.Active = true
+		rowsScroll.ScrollingEnabled = true
+		rowsScroll.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+		rowsScroll.ScrollBarImageTransparency = DEFAULT_SCROLLBAR_TRANSPARENCY
+	else
+		rowsScroll.ScrollingEnabled = false
+		rowsScroll.Active = false
+		rowsScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+		rowsScroll.ScrollBarImageTransparency = 1
+		rowsScroll.CanvasPosition = Vector2.zero
+
+		task.defer(function()
+			if not isRewardsOpen then
+				rowsScroll.CanvasPosition = Vector2.zero
+			end
+		end)
+		task.delay(0.06, function()
+			if not isRewardsOpen then
+				rowsScroll.CanvasPosition = Vector2.zero
+			end
+		end)
+
+		root.Active = false
+		root.Visible = false
+	end
+
+	for _, obj in ipairs(root:GetDescendants()) do
+		if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+			obj.Active = isOpen
+		elseif obj:IsA("ScrollingFrame") then
+			obj.Active = isOpen
+			obj.ScrollingEnabled = isOpen
+		end
+	end
+
+	closeBtn.Active = isOpen
+	openBtn.Active = true
+end
+
+local function clearRows()
+	for _, c in ipairs(rowsScroll:GetChildren()) do
+		if c:IsA("Frame") and c ~= rowTemplate then
+			c:Destroy()
+		end
+	end
+end
+
+local function styleClaim(btn, row, categoryId)
 	if row.claimed then
 		btn.Text = "CLAIMED"
 		btn.BackgroundColor3 = Color3.fromRGB(60, 220, 60)
@@ -146,6 +270,10 @@ local function styleClaim(btn, row)
 	elseif row.ready then
 		btn.Text = "CLAIM"
 		btn.BackgroundColor3 = Color3.fromRGB(60, 220, 60)
+		btn.Active = true
+	elseif categoryId == "social" then
+		btn.Text = "VISIT"
+		btn.BackgroundColor3 = Color3.fromRGB(70, 140, 255)
 		btn.Active = true
 	else
 		btn.Text = "NOT READY"
@@ -160,20 +288,46 @@ local function parseRewardImages(rewardsText)
 	local images = {}
 	local txt = tostring(rewardsText or "")
 	for _, p in ipairs(REWARD_PATTERNS) do
-		if txt:find(p.pattern) then table.insert(images, p.image) end
+		if txt:find(p.pattern) then
+			table.insert(images, p.image)
+		end
 	end
 	return images
 end
 
 local function loadProfileImage(imageLabel, userId)
-	if userId == 0 then imageLabel.Image = "rbxassetid://0"; return end
+	if userId == 0 then
+		imageLabel.Image = "rbxassetid://0"
+		return
+	end
 	local ok, url = pcall(function()
 		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
 	end)
 	imageLabel.Image = ok and url or "rbxassetid://0"
 end
 
--- ── Pager ──────────────────────────────────────────────────────
+local function ensureBottomOwnerLabel(clone)
+	local lbl = clone:FindFirstChild("BottomOwnerLbl")
+	if not lbl then
+		lbl = Instance.new("TextLabel")
+		lbl.Name = "BottomOwnerLbl"
+		lbl.BackgroundTransparency = 1
+		lbl.Size = UDim2.new(1, -16, 0, 18)
+		lbl.Position = UDim2.new(0, 8, 1, -20)
+		lbl.Font = Enum.Font.FredokaOne
+		lbl.TextSize = 13
+		lbl.TextWrapped = false
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextYAlignment = Enum.TextYAlignment.Center
+		lbl.TextColor3 = Color3.fromRGB(220, 235, 255)
+		lbl.TextStrokeTransparency = 0.4
+		lbl.ZIndex = 12
+		lbl.Parent = clone
+	end
+	return lbl
+end
+
 local function ensurePagerButton(container, name, text, xScale, xOffset)
 	local btn = container:FindFirstChild(name)
 	if not btn then
@@ -191,12 +345,14 @@ local function ensurePagerButton(container, name, text, xScale, xOffset)
 	btn.Size             = UDim2.new(0, IMAGE_CONFIG.ARROW_WIDTH, 0, IMAGE_CONFIG.ARROW_WIDTH)
 	btn.Position         = UDim2.new(xScale, xOffset, 0.5, 0)
 	btn.ZIndex           = 7
+
 	local corner = btn:FindFirstChildOfClass("UICorner")
 	if not corner then
 		corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(1, 0)
 		corner.Parent = btn
 	end
+
 	return btn
 end
 
@@ -210,11 +366,11 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 	local pageLbl = container:FindFirstChild("PageLbl")
 	if not pageLbl then
 		pageLbl = Instance.new("TextLabel")
-		pageLbl.Name               = "PageLbl"
+		pageLbl.Name = "PageLbl"
 		pageLbl.BackgroundTransparency = 1
-		pageLbl.TextColor3         = Color3.fromRGB(220, 230, 255)
-		pageLbl.TextScaled         = true
-		pageLbl.Parent             = container
+		pageLbl.TextColor3 = Color3.fromRGB(220, 230, 255)
+		pageLbl.TextScaled = true
+		pageLbl.Parent = container
 	end
 	pageLbl.Size     = UDim2.new(0, 54, 0, 16)
 	pageLbl.Position = UDim2.new(0.5, -27, 1, -16)
@@ -222,8 +378,7 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 
 	local function clearGenerated()
 		for _, child in ipairs(container:GetChildren()) do
-			if child:IsA("ImageLabel") and child ~= template
-				and child:GetAttribute("RewardClone") then
+			if child:IsA("ImageLabel") and child ~= template and child:GetAttribute("RewardClone") then
 				child:Destroy()
 			end
 		end
@@ -231,17 +386,19 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 
 	local function renderPage()
 		clearGenerated()
+
 		local count = #rewardImageKeys
 		if count == 0 then
-			leftBtn.Visible = false; rightBtn.Visible = false; pageLbl.Visible = false
+			leftBtn.Visible = false
+			rightBtn.Visible = false
+			pageLbl.Visible = false
 			return
 		end
 
 		local rowState = rowPageState[rowKey] or { page = 1 }
 		rowPageState[rowKey] = rowState
 
-		local avail = container.AbsoluteSize.X
-		- (IMAGE_CONFIG.ARROW_WIDTH * 2 + IMAGE_CONFIG.ARROW_GAP * 4)
+		local avail = container.AbsoluteSize.X - (IMAGE_CONFIG.ARROW_WIDTH * 2 + IMAGE_CONFIG.ARROW_GAP * 4)
 		if avail <= 0 then avail = 200 end
 
 		local iconSize     = IMAGE_CONFIG.DISPLAY_SIZE
@@ -262,7 +419,7 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 			img.Visible    = true
 			img.Image      = REWARD_IMAGES[rewardImageKeys[i]] or rewardImageKeys[i]
 			img.Size       = UDim2.new(0, iconSize, 0, iconSize)
-			img.Position   = UDim2.new(0, startX + (li-1)*(iconSize+spacing), 0.5, -iconSize/2)
+			img.Position   = UDim2.new(0, startX + (li - 1) * (iconSize + spacing), 0.5, -iconSize / 2)
 			img.ZIndex     = 3
 			img.Active     = false
 			img.Selectable = false
@@ -276,90 +433,125 @@ local function buildRewardPager(container, template, rowKey, rewardImageKeys)
 		pageLbl.Text     = string.format("%d/%d", rowState.page, totalPages)
 		leftBtn.Active   = rowState.page > 1
 		rightBtn.Active  = rowState.page < totalPages
-		leftBtn.TextTransparency  = leftBtn.Active  and 0 or 0.5
+		leftBtn.TextTransparency  = leftBtn.Active and 0 or 0.5
 		rightBtn.TextTransparency = rightBtn.Active and 0 or 0.5
 	end
 
 	leftBtn.MouseButton1Click:Connect(function()
 		local st = rowPageState[rowKey] or { page = 1 }
-		st.page -= 1; rowPageState[rowKey] = st; renderPage()
+		st.page -= 1
+		rowPageState[rowKey] = st
+		renderPage()
 	end)
+
 	rightBtn.MouseButton1Click:Connect(function()
 		local st = rowPageState[rowKey] or { page = 1 }
-		st.page += 1; rowPageState[rowKey] = st; renderPage()
+		st.page += 1
+		rowPageState[rowKey] = st
+		renderPage()
 	end)
 
 	renderPage()
 end
 
--- ── Row content ────────────────────────────────────────────────
 local function setupRowContent(clone, categoryId, rowIndex, rowData)
 	local leftLbl   = clone:FindFirstChild("LeftLbl")
 	local container = clone:FindFirstChild("RewardsContainer")
 	if not container then return end
-	local template  = container:FindFirstChild("ImageTemplate")
+
+	local template = container:FindFirstChild("ImageTemplate")
 	if not template or not template:IsA("ImageLabel") then return end
 	template.Visible = false
-	template.ZIndex  = 3
+	template.ZIndex = 3
+
+	local bottomLbl = ensureBottomOwnerLabel(clone)
+	bottomLbl.Visible = false
+	bottomLbl.Text = ""
 
 	if leftLbl and leftLbl:IsA("TextLabel") then
-		if     categoryId == "playtime"   then leftLbl.Text = rowData.left or ""
-		elseif categoryId == "daily"      then leftLbl.Text = "Day " .. tostring(rowIndex)
-		elseif categoryId == "group"      then leftLbl.Text = "Group"
-		elseif categoryId == "vipdaily"   then leftLbl.Text = "VIP"
-		elseif categoryId == "robuxspent" then leftLbl.Text = tostring(rowData.left or "")
-		elseif categoryId == "social"     then leftLbl.Text = "" end
+		if categoryId == "playtime" then
+			leftLbl.Text = rowData.left or ""
+		elseif categoryId == "daily" then
+			leftLbl.Text = "Day " .. tostring(rowIndex)
+		elseif categoryId == "group" then
+			leftLbl.Text = "Group"
+		elseif categoryId == "vipdaily" then
+			leftLbl.Text = "VIP"
+		elseif categoryId == "robuxspent" then
+			leftLbl.Text = tostring(rowData.left or "")
+		elseif categoryId == "social" then
+			leftLbl.Text = ""
+		end
 	end
 
 	if categoryId == "social" and SOCIAL_DEVS[rowIndex] and leftLbl then
+		local dev = SOCIAL_DEVS[rowIndex]
+		clone:SetAttribute("SocialUserId", dev.userId)
+
+		leftLbl.Text = ""
+		leftLbl.ClipsDescendants = true
+
 		local img = leftLbl:FindFirstChild("ProfileImage")
 		if not img then
 			img = Instance.new("ImageLabel")
-			img.Name            = "ProfileImage"
-			img.Size            = UDim2.new(0, 80, 0, 80)
-			img.Position        = UDim2.new(0.5, 0, 0.5, 0)
-			img.AnchorPoint     = Vector2.new(0.5, 0.5)
+			img.Name = "ProfileImage"
 			img.BackgroundTransparency = 1
-			img.Parent          = leftLbl
+			img.Size = UDim2.new(0.32, 0, 0.82, 0)
+			img.Position = UDim2.new(0.03, 0, 0.5, 0)
+			img.AnchorPoint = Vector2.new(0, 0.5)
+			img.ScaleType = Enum.ScaleType.Fit
+			img.Parent = leftLbl
 		end
-		loadProfileImage(img, SOCIAL_DEVS[rowIndex].userId)
+
+		local oldNameLbl = leftLbl:FindFirstChild("NameLbl")
+		if oldNameLbl then oldNameLbl.Visible = false end
+
+		bottomLbl.Visible = true
+		bottomLbl.Text = "Owner: @" .. dev.username
+		loadProfileImage(img, dev.userId)
 	end
 
-	local keys   = parseRewardImages(rowData.rewards or "")
+	local keys = parseRewardImages(rowData.rewards or "")
 	local rowKey = tostring(categoryId) .. ":" .. tostring(rowData.id or rowIndex)
 	buildRewardPager(container, template, rowKey, keys)
 end
 
--- ── Subtitle ───────────────────────────────────────────────────
 local function refreshCategorySubtitle()
-	if not payload or not activeCat then subLbl.Text = ""; return end
+	if not payload or not activeCat then
+		subLbl.Text = ""
+		return
+	end
+
 	if activeCat == "robuxspent" then
 		subLbl.Text = string.format("Total Robux spent: R$%d", tonumber(payload.robuxSpentTotal) or 0)
 	elseif activeCat == "playtime" then
 		subLbl.Text = "You played for " .. formatTime(playtimeSeconds)
 	elseif activeCat == "daily" then
-		subLbl.Text = dailyCountdown > 0
-			and ("Ready to claim in " .. formatTime(dailyCountdown))
-			or "Daily reward ready"
-	elseif activeCat == "social"   then subLbl.Text = "Follow these developers on Roblox!"
-	elseif activeCat == "group"    then subLbl.Text = "Like the game + Join the group"
-	elseif activeCat == "vipdaily" then subLbl.Text = "Become VIP to claim"
-	else subLbl.Text = "" end
-end
-
--- ── Live updater ───────────────────────────────────────────────
-local function stopLiveUpdater()
-	if updateConn then updateConn:Disconnect(); updateConn = nil end
+		subLbl.Text = dailyCountdown > 0 and ("Ready to claim in " .. formatTime(dailyCountdown)) or "Daily reward ready"
+	elseif activeCat == "social" then
+		subLbl.Text = "Visit the owners and claim your rewards!"
+	elseif activeCat == "group" then
+		subLbl.Text = "Like the game + Join the group"
+	elseif activeCat == "vipdaily" then
+		subLbl.Text = "Become VIP to claim"
+	else
+		subLbl.Text = ""
+	end
 end
 
 local function startLiveUpdater()
 	stopLiveUpdater()
 	lastTick = tick()
+
 	updateConn = RunService.Heartbeat:Connect(function()
 		if not payload or not activeCat then return end
-		local now = tick(); local dt = now - lastTick; lastTick = now
+		local now = tick()
+		local dt = now - lastTick
+		lastTick = now
+
 		if activeCat == "playtime" then
-			playtimeSeconds += dt; refreshCategorySubtitle()
+			playtimeSeconds += dt
+			refreshCategorySubtitle()
 		elseif activeCat == "daily" then
 			dailyCountdown = math.max(0, dailyCountdown - dt)
 			refreshCategorySubtitle()
@@ -367,32 +559,46 @@ local function startLiveUpdater()
 	end)
 end
 
--- ── Render ─────────────────────────────────────────────────────
 local function renderRows()
 	clearRows()
 	rowPageState = {}
+
 	local rows = payload and payload.categories and payload.categories[activeCat] or {}
-	local y    = 6
+	local y = 6
 	local rowH = rowTemplate.Size.Y.Offset > 0 and rowTemplate.Size.Y.Offset or 100
-	local gap  = 10
+	local gap = 10
 
 	for idx, row in ipairs(rows) do
 		local clone = rowTemplate:Clone()
-		clone.Visible  = true
-		clone.Name     = "Row_" .. tostring(row.id or idx)
+		clone.Visible = true
+		clone.Name = "Row_" .. tostring(row.id or idx)
 		clone.Position = UDim2.new(rowTemplate.Position.X.Scale, rowTemplate.Position.X.Offset, 0, y)
-		clone.Size     = UDim2.new(rowTemplate.Size.X.Scale, rowTemplate.Size.X.Offset, 0, rowH)
-		clone.Parent   = rowsScroll
+		clone.Size = UDim2.new(rowTemplate.Size.X.Scale, rowTemplate.Size.X.Offset, 0, rowH)
+		clone.Parent = rowsScroll
+
 		setupRowContent(clone, activeCat, idx, row)
+
 		local claimBtn = clone:FindFirstChild("ClaimBtn")
 		if claimBtn and claimBtn:IsA("TextButton") then
-			styleClaim(claimBtn, row)
+			styleClaim(claimBtn, row, activeCat)
+
 			claimBtn.MouseButton1Click:Connect(function()
+				if activeCat == "social" and not row.ready and not row.claimed then
+					pcall(function()
+						SocialService:PromptGameInvite(player)
+					end)
+
+					SocialVisit:FireServer(row.id)
+					task.delay(2, requestSync)
+					return
+				end
+
 				if row.ready and not row.claimed then
 					RewardClaim:FireServer(activeCat, row.id)
 				end
 			end)
 		end
+
 		y += rowH + gap
 	end
 
@@ -402,12 +608,14 @@ end
 
 local function render()
 	titleLbl.Text = CAT_TITLE[activeCat] or "Rewards"
+
 	if not payload then
 		stopLiveUpdater()
 		subLbl.Text = "Waiting for server sync..."
 		clearRows()
 		return
 	end
+
 	if activeCat == "playtime" then
 		playtimeSeconds = tonumber(payload.totalPlaytime) or 0
 		startLiveUpdater()
@@ -417,89 +625,121 @@ local function render()
 	else
 		stopLiveUpdater()
 	end
+
 	refreshCategorySubtitle()
 	renderRows()
 end
 
 local function selectCategory(cat)
 	activeCat = cat
-	render()
+	if isRewardsOpen then render() end
 end
 
--- ── Tab buttons ────────────────────────────────────────────────
-for btnName, cat in pairs(TAB_TO_CAT) do
-	local btn = leftTabs:FindFirstChild(btnName)
-	if btn and btn:IsA("TextButton") then
-		btn.MouseButton1Click:Connect(function() selectCategory(cat) end)
-	end
-end
+local function openRewardsTo(cat)
+	activeCat = cat or activeCat or "playtime"
+	pendingOpenCategory = activeCat
 
--- ── Open / Close ───────────────────────────────────────────────
-local function onOpen()
+	setRewardsOpenState(true)
+	rowsScroll.CanvasPosition = Vector2.zero
 	requestSync()
 	render()
 end
 
-local function onClose()
-	stopLiveUpdater()
-	rowsScroll.CanvasPosition = Vector2.zero
+local function onOpen()
+	openRewardsTo(activeCat or "playtime")
 end
 
--- ── Auto reward tour ───────────────────────────────────────────
--- Shows daily rewards tab automatically a few seconds after joining.
--- Uses root.Visible directly — does not go through animator so it
--- cannot be blocked by locked state.
-local function doAutoTour()
+local function onClose()
+	stopLiveUpdater()
+	setRewardsOpenState(false)
+	rowsScroll.CanvasPosition = Vector2.zero
+
+	if autoOpenMode == "daily" and not hasAutoOpenedPlay then
+		hasAutoOpenedPlay = true
+		autoOpenMode = "playtime"
+		task.delay(0.45, function()
+			if not isRewardsOpen then
+				openRewardsTo("playtime")
+			end
+		end)
+	else
+		autoOpenMode = nil
+	end
+end
+
+for btnName, cat in pairs(TAB_TO_CAT) do
+	local btn = leftTabs:FindFirstChild(btnName)
+	if btn and btn:IsA("TextButton") then
+		btn.MouseButton1Click:Connect(function()
+			selectCategory(cat)
+		end)
+	end
+end
+
+local function startJoinRewardTour()
 	if autoTourStarted then return end
 	autoTourStarted = true
+	autoOpenMode = "daily"
 
 	task.spawn(function()
-		-- Wait for payload (server sends ~1.5s after join)
 		local waited = 0
 		while not payload and waited < 15 do
 			task.wait(0.5)
 			waited += 0.5
 		end
-		if not payload then
-			warn("[Rewards] Auto tour: no payload after 15s, giving up")
-			return
+		if not payload then return end
+		task.wait(1.2)
+		openRewardsTo("daily")
+	end)
+end
+
+task.spawn(function()
+	local rf = game:GetService("ReplicatedFirst")
+	local finished = rf:FindFirstChild("LoadingFinished")
+
+	if finished and finished:IsA("BindableEvent") then
+		finished.Event:Wait()
+	else
+		task.wait(5)
+	end
+
+	local waited = 0
+	while waited < 30 do
+		local tutorialGui = player.PlayerGui:FindFirstChild("TutorialGui")
+		if not tutorialGui or tutorialGui.Enabled == false then
+			break
 		end
+		task.wait(0.2)
+		waited += 0.2
+	end
 
-		task.wait(2) -- small delay so player is fully in
+	startJoinRewardTour()
+end)
 
-		-- Switch to daily tab and show
-		activeCat = "daily"
-		root.Visible = true
-		render()
-		requestSync()
+openBtn.MouseButton1Click:Connect(function()
+	if isRewardsOpen then
+		onClose()
+	else
+		onOpen()
+	end
+end)
 
-		print("[Rewards] Auto tour: showed daily rewards")
-	end)
-end
+closeBtn.MouseButton1Click:Connect(onClose)
 
--- ── Animator registration ──────────────────────────────────────
-local t = 0
-while not _G.UIWindowAnimator and t < 5 do task.wait(0.1); t += 0.1 end
-
-if _G.UIWindowAnimator then
-	_G.UIWindowAnimator.register("rewards", root, openBtn, closeBtn, onOpen)
-	closeBtn.MouseButton1Click:Connect(onClose)
-else
-	openBtn.MouseButton1Click:Connect(function()
-		if root.Visible then onClose(); root.Visible = false
-		else root.Visible = true; onOpen() end
-	end)
-	closeBtn.MouseButton1Click:Connect(function() onClose(); root.Visible = false end)
-end
-
--- ── Server sync ────────────────────────────────────────────────
 RewardSync.OnClientEvent:Connect(function(newPayload)
 	if type(newPayload) ~= "table" then return end
 	payload = newPayload
-	if root.Visible then render() end
+
+	if pendingOpenCategory then
+		activeCat = pendingOpenCategory
+		pendingOpenCategory = nil
+	end
+
+	if isRewardsOpen then
+		render()
+	end
 end)
 
--- ── Daily Quests panel ─────────────────────────────────────────
 local questF    = gameGui:WaitForChild("DailyQuestsF")
 local toggleBtn = questF:WaitForChild("ToggleBtn")
 local openPos   = UDim2.new(0.76, 0, 0.025, 0)
@@ -508,25 +748,21 @@ local isQuestOpen = true
 questF.Position = openPos
 
 local function setQuestOpen(open)
-	isQuestOpen    = open
+	isQuestOpen = open
 	toggleBtn.Text = open and ">" or "<"
-	TweenService:Create(questF,
+	TweenService:Create(
+		questF,
 		TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Position = open and openPos or closedPos }
 	):Play()
 end
 
-toggleBtn.MouseButton1Click:Connect(function() setQuestOpen(not isQuestOpen) end)
-
--- ── Init ───────────────────────────────────────────────────────
-root.Visible = false
-requestSync()
-render()
-
--- Fire auto tour after join
-task.spawn(function()
-	task.wait(4) -- wait for server to send initial payload
-	doAutoTour()
+toggleBtn.MouseButton1Click:Connect(function()
+	setQuestOpen(not isQuestOpen)
 end)
+
+captureVisualDefaults()
+setRewardsOpenState(false)
+requestSync()
 
 print("[RewardsController] Ready")
