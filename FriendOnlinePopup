@@ -16,8 +16,8 @@ local REWARD_TEXT = "+$50 CASH"
 local POLL_INTERVAL = 15
 local GLOBAL_POPUP_COOLDOWN = 90
 local PER_FRIEND_COOLDOWN = 1200
-local MAX_POPUPS_PER_SESSION = 6
-local MAX_QUEUE_SIZE = 6
+local MAX_POPUPS_PER_SESSION = 8
+local MAX_QUEUE_SIZE = 8
 
 local popup, titleLbl, closeBtn, avatarImg, rewardLbl, inviteBtn, countdownFill, countdownText, testBtn
 local countdownConn = nil
@@ -170,20 +170,20 @@ local function createGui()
 	countdownText.ZIndex = 52
 	countdownText.Parent = popup
 
-	testBtn = Instance.new("TextButton")
-	testBtn.Name = "TestPopupBtn"
-	testBtn.AnchorPoint = Vector2.new(1, 1)
-	testBtn.Position = UDim2.fromScale(0.985, 0.985)
-	testBtn.Size = UDim2.fromScale(0.12, 0.05)
-	testBtn.BackgroundColor3 = Color3.fromRGB(20, 28, 42)
-	testBtn.TextColor3 = Color3.fromRGB(230, 240, 255)
-	testBtn.Text = "Test Popup"
-	testBtn.TextScaled = true
-	testBtn.Font = Enum.Font.GothamBold
-	testBtn.ZIndex = 48
-	testBtn.Parent = gameGui
-	makeCornerScale(testBtn, 0.25)
-	makeStroke(testBtn, Color3.fromRGB(92, 130, 220), 1.5)
+	--testBtn = Instance.new("TextButton")
+	--testBtn.Name = "TestPopupBtn"
+	--testBtn.AnchorPoint = Vector2.new(1, 1)
+	--testBtn.Position = UDim2.fromScale(0.985, 0.985)
+	--testBtn.Size = UDim2.fromScale(0.12, 0.05)
+	--testBtn.BackgroundColor3 = Color3.fromRGB(20, 28, 42)
+	--testBtn.TextColor3 = Color3.fromRGB(230, 240, 255)
+	--testBtn.Text = "Test Popup"
+	--testBtn.TextScaled = true
+	--testBtn.Font = Enum.Font.GothamBold
+	--testBtn.ZIndex = 48
+	--testBtn.Parent = gameGui
+	--makeCornerScale(testBtn, 0.25)
+	--makeStroke(testBtn, Color3.fromRGB(92, 130, 220), 1.5)
 end
 
 local function setAvatar(userId)
@@ -322,9 +322,9 @@ end)
 
 closeBtn.MouseButton1Click:Connect(hidePopup)
 
-testBtn.MouseButton1Click:Connect(function()
-	showPopup("PopupTestUser", player.UserId)
-end)
+--testBtn.MouseButton1Click:Connect(function()
+--	showPopup("PopupTestUser", player.UserId)
+--end)
 
 bootstrapPresence()
 
