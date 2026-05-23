@@ -1,0 +1,95 @@
+-- TableRescueHotfix.server.lua
+-- Emergency unstick for live servers
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Events = ReplicatedStorage:WaitForChild("Events")
+
+local TableStatus = Events:FindFirstChild("TableStatus")
+local TableCountdown = Events:FindFirstChild("TableCountdown")
+
+local seen = {}
+
+local function hasActiveSessionForPlayers(a, b)
+	if not _G.GetSessionByPlayer then return false end
+	local sa = _G.GetSessionByPlayer(a)
+	if sa and sa.active and ((sa.playerA == a and sa.playerB == b) or (sa.playerA == b and sa.playerB == a)) then
+		return true
+	end
+	local sb = _G.GetSessionByPlayer(b)
+	if sb and sb.active and ((sb.playerA == a and sb.playerB == b) or (sb.playerA == b and sb.playerB == a)) then
+		return true
+	end
+	return false
+end
+
+local function rescueTable(tableId, ta, tb, reason)
+	warn("[TableRescue]", tableId, reason)
+
+	if TableStatus then TableStatus:FireAllClients(tableId, "Resyncing table...") end
+	if TableCountdown then TableCountdown:FireAllClients(tableId, 0) end
+
+	if _G.SeatManager and _G.SeatManager.standPlayer then
+		pcall(function() _G.SeatManager.standPlayer(ta, true) end)
+		pcall(function() _G.SeatManager.standPlayer(tb, true) end)
+	end
+
+	task.delay(0.2, function()
+		if _G.SeatManager and _G.SeatManager.setTableLocked then
+			pcall(function() _G.SeatManager.setTableLocked(tableId, false) end)
+		end
+		if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
+			pcall(function() _G.SeatManager.setTablePromptEnabled(tableId, true) end)
+		end
+		if TableStatus then TableStatus:FireAllClients(tableId, "") end
+	end)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(5)
+
+		if not (_G.SeatManager and _G.SeatManager.getAllTables) then
+			continue
+		end
+
+		local now = os.clock()
+		local all = _G.SeatManager.getAllTables() or {}
+
+		for tableId, t in pairs(all) do
+			local a = t.seats and t.seats.A and t.seats.A.player
+			local b = t.seats and t.seats.B and t.seats.B.player
+
+			-- If table locked but no full pair, unlock it.
+			if (not a or not b) and t.locked then
+				if _G.SeatManager and _G.SeatManager.setTableLocked then
+					_G.SeatManager.setTableLocked(tableId, false)
+				end
+				if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
+					_G.SeatManager.setTablePromptEnabled(tableId, true)
+				end
+				seen[tableId] = nil
+			elseif a and b then
+				local rec = seen[tableId]
+				if not rec then
+					seen[tableId] = { startedAt = now, a = a.UserId, b = b.UserId }
+				else
+					-- pair changed
+					if rec.a ~= a.UserId or rec.b ~= b.UserId then
+						seen[tableId] = { startedAt = now, a = a.UserId, b = b.UserId }
+					else
+						local elapsed = now - rec.startedAt
+						if elapsed >= 20 then
+							local active = hasActiveSessionForPlayers(a, b)
+							if not active then
+								rescueTable(tableId, a, b, "no active session after 20s")
+								seen[tableId] = nil
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+print("[TableRescueHotfix] Ready")
