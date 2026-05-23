@@ -589,7 +589,10 @@ local function renderRows()
 					end)
 
 					SocialVisit:FireServer(row.id)
-					task.delay(2, requestSync)
+					task.delay(1, requestSync)
+					task.delay(3, requestSync)
+					task.delay(5.2, requestSync)
+					task.delay(6, requestSync)
 					return
 				end
 
