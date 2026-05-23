@@ -198,8 +198,13 @@ local function fallbackReleaseCamera()
 		cam.CameraSubject = hum
 	end
 end
-
-local function CamGoWideShot(duration)
+local focusToken = 0
+local focusLocked = false
+local focusedSlot = nil
+local function CamGoWideShot(duration, force)
+	if focusLocked and not force then
+		return
+	end
 	if not callExternalCamera("GoWideShot", duration) then
 		fallbackGoWideShot(duration)
 	end
@@ -222,7 +227,39 @@ local function CamObservePlayerFace(slot, duration, overlayText)
 		fallbackZoomIntoFace(slot, duration)
 	end
 end
+-- Camera focus lock for "X is guessing..."
+-- Camera focus lock for "X is guessing..."
 
+
+local function getSlotFromName(playerName)
+	if myTableSeatNames.A == playerName then return "A" end
+	if myTableSeatNames.B == playerName then return "B" end
+	return nil
+end
+
+local function stopGuessFocus(unzoom)
+	focusToken += 1
+	focusLocked = false
+	focusedSlot = nil
+	if unzoom then
+		CamGoWideShot(0.35, true)
+	end
+end
+
+local function holdGuessFocus(slot)
+	if not slot then return end
+	focusToken += 1
+	local token = focusToken
+	focusLocked = true
+	focusedSlot = slot
+
+	task.spawn(function()
+		while focusLocked and focusToken == token and iAmSeated do
+			CamObservePlayerFace(slot, 0.22)
+			task.wait(0.22)
+		end
+	end)
+end
 local function CamRelease(duration)
 	if not callExternalCamera("ReleaseCamera", duration) then
 		fallbackReleaseCamera()
@@ -335,11 +372,7 @@ local function getOtherSlot()
 	return nil
 end
 
-local function getSlotByName(name)
-	if myTableSeatNames.A == name then return "A" end
-	if myTableSeatNames.B == name then return "B" end
-	return nil
-end
+
 local function isStealPrompt(prompt)
 	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
 	if prompt.Name == "StealPrompt" then return true end
@@ -356,16 +389,24 @@ local function setLocalStealPromptsEnabled(enabled)
 	end
 end
 local function setGuessingOverlay(t)
-	if F.BlurOverlay then
-		F.BlurOverlay.Visible = true
+	local overlay = F.BlurOverlay
+	if overlay and overlay:IsA("GuiObject") then
+		overlay.Visible = true
+		if overlay.BackgroundTransparency >= 0.9 then
+			overlay.BackgroundTransparency = 0.45
+		end
 	end
 	if F.GuessingLbl then
+		F.GuessingLbl.Visible = true
 		F.GuessingLbl.Text = t or ""
 		F.GuessingLbl.TextTransparency = t and 0 or 1
 	end
 end
 
 local function hideGuessingOverlay()
+	if F.BlurOverlay and F.BlurOverlay:IsA("GuiObject") then
+		F.BlurOverlay.Visible = false
+	end
 	if F.GuessingLbl then
 		F.GuessingLbl.Text = ""
 		F.GuessingLbl.TextTransparency = 1
@@ -759,6 +800,7 @@ if E.PlayerStood then
 
 		if name == player.Name then
 			iAmSeated = false
+			stopGuessFocus(false)
 			mySlot = nil
 			myTableId = nil
 			myTableSeatNames = { A = nil, B = nil }
@@ -861,13 +903,15 @@ if E.ShowBillboard then
 		end
 
 		if tostring(text) == "Guessing" then return end
+		stopGuessFocus(true)
 		hideGuessingOverlay()
-		CamGoWideShot(0.45)
 	end)
 end
 
 if E.ShowWait then
+	
 	E.ShowWait.OnClientEvent:Connect(function(msg, focusName, focusSlot, countryHint)
+		
 		if not iAmSeated then return end
 
 		hideAll()
@@ -884,19 +928,23 @@ if E.ShowWait then
 			guessedName = tostring(msg or ""):match("^(.-) is guessing")
 		end
 
-		local targetSlot = focusSlot or getSlotByName(guessedName) or getOtherSlot()
+		local targetSlot = focusSlot or getSlotFromName(guessedName) or getOtherSlot()
 		if guessedName == player.Name then
 			targetSlot = nil
 		end
 
 		local overlayText = ((guessedName and guessedName ~= "") and (guessedName .. " is guessing")) or "Opponent is guessing"
+		if not targetSlot and focusLocked then
+			targetSlot = focusedSlot
+		end
 
 		if targetSlot then
 			setGuessingOverlay(overlayText)
-			CamObservePlayerFace(targetSlot, 0.7, overlayText)
+			holdGuessFocus(targetSlot)
 		else
+			stopGuessFocus(false)
 			hideGuessingOverlay()
-			CamGoWideShot(0.6)
+			CamGoWideShot(0.6, true)
 		end
 	end)
 end
@@ -965,6 +1013,7 @@ end
 
 if E.ShowLetterGuess then
 	E.ShowLetterGuess.OnClientEvent:Connect(function(data)
+		
 		if not iAmSeated then return end
 
 		hideAll()
@@ -981,6 +1030,7 @@ if E.ShowLetterGuess then
 		F.LGuessTimer.TextColor3 = Color3.fromRGB(255, 215, 0)
 
 		if mySlot then
+			stopGuessFocus(false)
 			CamZoomGuessTurn(mySlot, 0.8)
 		end
 
@@ -1018,6 +1068,7 @@ if E.LetterGuessResult then
 end
 
 if E.ShowCountryGuess then
+	
 	E.ShowCountryGuess.OnClientEvent:Connect(function(data)
 		if not iAmSeated then return end
 
@@ -1038,9 +1089,10 @@ if E.ShowCountryGuess then
 
 			if otherSlot then
 				setGuessingOverlay(overlayText)
-				CamObservePlayerFace(otherSlot, 0.7, overlayText)
+				holdGuessFocus(otherSlot)
 			else
-				CamGoWideShot(0.6)
+				stopGuessFocus(false)
+				CamGoWideShot(0.6, true)
 			end
 			return
 		end
@@ -1057,6 +1109,7 @@ if E.ShowCountryGuess then
 		F.CGuessTimer.TextColor3 = Color3.fromRGB(255, 215, 0)
 
 		if mySlot then
+			stopGuessFocus(false)
 			CamZoomGuessTurn(mySlot, 0.8)
 		end
 
@@ -1133,6 +1186,7 @@ if E.RoundOver then
 end
 
 if E.GameOver then
+	stopGuessFocus(false)
 	E.GameOver.OnClientEvent:Connect(function(data)
 		hideAll()
 		hardUnlockMovementAndCamera()
@@ -1154,6 +1208,7 @@ if E.GameOver then
 end
 
 if E.ResetAll then
+	stopGuessFocus(false)
 	E.ResetAll.OnClientEvent:Connect(function()
 		myElimMin = 0
 		myElimMax = 27
