@@ -221,13 +221,23 @@ local function endSession(tableId, winnerName, reason)
 	end)
 end
 
-local function showPlayerAsk(session, text)
+local function showPlayerAsk(session, askText)
 	clearBotDisplay(session.tableId)
-	E.ShowBillboard:FireClient(session.player, session.player.Name, text, "white")
+	E.ShowBillboard:FireAllClients(
+		session.player.Name,
+		tostring(askText or ""),
+		"white",
+		session.tableId
+	)
 end
 
-local function showPlayerReply(session, text, color)
-	E.ShowBillboard:FireClient(session.player, session.player.Name, text, color or "white")
+local function showPlayerReply(session, replyText, color)
+	E.ShowBillboard:FireAllClients(
+		session.player.Name,
+		tostring(replyText or ""),
+		color or "white",
+		session.tableId
+	)
 end
 
 local function showBotAsk(session, text)
