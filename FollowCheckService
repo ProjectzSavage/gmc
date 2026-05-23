@@ -1,0 +1,69 @@
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Events = ReplicatedStorage:WaitForChild("Events")
+local IsFollowingOwnerRF = Events:FindFirstChild("IsFollowingOwnerRF")
+
+if not IsFollowingOwnerRF then
+	IsFollowingOwnerRF = Instance.new("RemoteFunction")
+	IsFollowingOwnerRF.Name = "IsFollowingOwnerRF"
+	IsFollowingOwnerRF.Parent = Events
+end
+
+local OWNER_IDS = {
+	3107183806, -- TheCoolBaconHairIsMe
+	3721585498, -- YurisMatrix
+}
+
+local function followsOwner(playerUserId, ownerId)
+	local cursor = ""
+	local tries = 0
+
+	while tries < 5 do
+		tries += 1
+
+		local url = string.format(
+			"https://friends.roproxy.com/v1/users/%d/followings?limit=100&sortOrder=Asc%s",
+			playerUserId,
+			(cursor ~= "" and ("&cursor=" .. HttpService:UrlEncode(cursor)) or "")
+		)
+
+		local ok, body = pcall(function()
+			return HttpService:GetAsync(url)
+		end)
+		if not ok then
+			warn("[FollowCheck] GetAsync failed:", body)
+			return false
+		end
+
+		local okDecode, data = pcall(function()
+			return HttpService:JSONDecode(body)
+		end)
+		if not okDecode then
+			warn("[FollowCheck] JSON decode failed:", data)
+			return false
+		end
+
+		for _, follow in ipairs(data.data or {}) do
+			if follow.id == ownerId then
+				return true
+			end
+		end
+
+		cursor = data.nextPageCursor or ""
+		if cursor == "" then
+			break
+		end
+	end
+
+	return false
+end
+
+IsFollowingOwnerRF.OnServerInvoke = function(player)
+	for _, ownerId in ipairs(OWNER_IDS) do
+		if followsOwner(player.UserId, ownerId) then
+			return true, ownerId
+		end
+	end
+	return false, nil
+end
