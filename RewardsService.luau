@@ -4,7 +4,6 @@ print("[Rewards] Server script starting...")
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local RewardDataStore = DataStoreService:GetDataStore("RewardsData_V1")
@@ -25,18 +24,19 @@ local NotifyPlayer      = ensureEvent("NotifyPlayer")
 local AddRobuxSpent     = ensureEvent("AddRobuxSpent")
 local UsePowerup        = ensureEvent("UsePowerup")
 local RewardRequestSync = ensureEvent("RewardRequestSync")
+local SocialVisit       = ensureEvent("SocialVisit")
 
 print("[Rewards] DataStore + events ready")
 
 local SOCIAL_TARGETS = {
 	{
 		id = 3107183806,
-		title = "Follow Owner",
+		title = "Visit Owner",
 		rewards = "+$500, +1 Magnifier",
 	},
 	{
 		id = 3721585498,
-		title = "Follow Co-Owner",
+		title = "Visit Co-Owner",
 		rewards = "+$500, +1 Hook",
 	},
 }
@@ -48,10 +48,9 @@ local MYSTERY_CHAIR_POOL = {
 }
 
 local DAILY_SECONDS = 24 * 60 * 60
-local FOLLOW_CACHE_TTL = 300
+local SOCIAL_CLAIM_DELAY = 5
 
 local playerData = {}
-local followCache = {}
 
 local PLAYTIME = {
 	{ id = "pt_5",  rewards = "+$250", requiredMin = 5 },
@@ -83,6 +82,12 @@ local ROBUX_SPENT = {
 	{ id = "rb_10000", rewards = "+$30000, +2 Magnifier, +2 Hook, +2 Mystery", required = 10000 },
 }
 
+local function isDailyId(id)
+	if type(id) ~= "string" then return false end
+	if string.sub(id, 1, 1) ~= "d" then return false end
+	return tonumber(string.sub(id, 2)) ~= nil
+end
+
 local function loadData(player)
 	local ok, data = pcall(function()
 		return RewardDataStore:GetAsync("player_" .. player.UserId)
@@ -95,12 +100,15 @@ local function loadData(player)
 		data.robuxSpent = data.robuxSpent or 0
 		data.lastClaimDate = data.lastClaimDate or os.date("%Y-%m-%d")
 		data.totalPlaytime = data.totalPlaytime or 0
+		data.socialVisitAt = data.socialVisitAt or {}
+
 		data.powerups = data.powerups or {}
 		data.powerups.magnifier = data.powerups.magnifier or 0
 		data.powerups.hook = data.powerups.hook or 0
 		data.powerups.mystery = data.powerups.mystery or 0
 		data.powerups.boost2x = data.powerups.boost2x or 0
 		data.powerups.boost2xExpiry = data.powerups.boost2xExpiry or 0
+
 		print("[Rewards] Loaded data for", player.Name)
 		return data
 	end
@@ -113,6 +121,7 @@ local function loadData(player)
 		robuxSpent = 0,
 		lastClaimDate = os.date("%Y-%m-%d"),
 		totalPlaytime = 0,
+		socialVisitAt = {},
 		powerups = {
 			magnifier = 0,
 			hook = 0,
@@ -126,6 +135,7 @@ end
 local function saveData(player)
 	local data = playerData[player.UserId]
 	if not data then return end
+
 	local ok, err = pcall(function()
 		RewardDataStore:SetAsync("player_" .. player.UserId, data)
 	end)
@@ -211,7 +221,6 @@ end
 
 local function giveMysteryReward(player, count)
 	count = math.max(1, tonumber(count) or 1)
-	local data = ensureData(player)
 
 	if _G.ChairGrantMystery then
 		local pool = {
@@ -223,19 +232,21 @@ local function giveMysteryReward(player, count)
 		return
 	end
 
-	-- fallback direct datastore grant
 	local key = "c_" .. player.UserId
 	local chairData = nil
+
 	local okLoad, loaded = pcall(function()
 		return ChairStore:GetAsync(key)
 	end)
+
 	if okLoad and type(loaded) == "table" then
 		chairData = loaded
 	else
-		chairData = { owned = {"Default"}, equipped = "Default" }
+		chairData = { owned = { "Default" }, equipped = "Default" }
 	end
 
-	chairData.owned = chairData.owned or {"Default"}
+	chairData.owned = chairData.owned or { "Default" }
+
 	local ownedSet = {}
 	for _, c in ipairs(chairData.owned) do
 		ownedSet[c] = true
@@ -250,6 +261,7 @@ local function giveMysteryReward(player, count)
 			end
 		end
 		if #candidates == 0 then break end
+
 		local pick = candidates[math.random(1, #candidates)]
 		ownedSet[pick] = true
 		table.insert(chairData.owned, pick)
@@ -315,69 +327,33 @@ end
 
 local function checkDailyReset(player, data)
 	local today = os.date("%Y-%m-%d")
-	if data.lastClaimDate ~= today then
-		for id in pairs(data.claimed) do
-			if string.sub(id, 1, 3) ~= "pt_" then
-				data.claimed[id] = nil
-			end
+	if data.lastClaimDate == today then return end
+
+	-- Only reset daily-type claims, not group/social/robuxspent progression.
+	for id in pairs(data.claimed) do
+		if isDailyId(id) or id == "vip_daily_main" then
+			data.claimed[id] = nil
 		end
-
-		data.lastClaimDate = today
-		data.lastDailyClaim = 0 -- new daily is ready immediately
-		data.dailyDay = data.dailyDay or 1
-
-		saveData(player)
-		print("[Rewards] Daily reset for", player.Name, "(daily ready, pt_* preserved)")
 	end
+
+	data.lastClaimDate = today
+	data.lastDailyClaim = 0
+	data.dailyDay = data.dailyDay or 1
+
+	saveData(player)
+	print("[Rewards] Daily reset for", player.Name)
 end
 
-local function isFollowing(playerUserId, targetUserId)
-	local key = tostring(playerUserId) .. ":" .. tostring(targetUserId)
-	local cached = followCache[key]
-	if cached and cached.expiresAt > os.time() then
-		return cached.value
+local function markPastDailyAsClaimed(data)
+	local dayNow = math.clamp(tonumber(data.dailyDay) or 1, 1, #DAILY)
+	data.claimed = data.claimed or {}
+
+	for i = 1, dayNow - 1 do
+		local def = DAILY[i]
+		if def and def.id then
+			data.claimed[def.id] = true
+		end
 	end
-
-	local cursor = nil
-	for _ = 1, 20 do
-		local url = string.format(
-			"https://friends.roblox.com/v1/users/%d/followings?sortOrder=Asc&limit=100",
-			playerUserId
-		)
-		if cursor then
-			url ..= "&cursor=" .. HttpService:UrlEncode(cursor)
-		end
-
-		local ok, body = pcall(function()
-			return HttpService:GetAsync(url)
-		end)
-		if not ok then
-			warn("[Rewards] follow check failed:", body)
-			break
-		end
-
-		local decoded
-		local okDecode, errDecode = pcall(function()
-			decoded = HttpService:JSONDecode(body)
-		end)
-		if not okDecode then
-			warn("[Rewards] follow decode failed:", errDecode)
-			break
-		end
-
-		for _, row in ipairs(decoded.data or {}) do
-			if tonumber(row.id) == targetUserId then
-				followCache[key] = { value = true, expiresAt = os.time() + FOLLOW_CACHE_TTL }
-				return true
-			end
-		end
-
-		cursor = decoded.nextPageCursor
-		if not cursor then break end
-	end
-
-	followCache[key] = { value = false, expiresAt = os.time() + FOLLOW_CACHE_TTL }
-	return false
 end
 
 local function buildPayload(player, data)
@@ -396,37 +372,46 @@ local function buildPayload(player, data)
 		robuxspent = {},
 	}
 
+	markPastDailyAsClaimed(data)
+
 	for _, row in ipairs(PLAYTIME) do
+		local claimed = isClaimed(data, row.id)
 		table.insert(categories.playtime, {
 			id = row.id,
 			left = row.requiredMin .. "m",
 			rewards = row.rewards,
-			claimed = isClaimed(data, row.id),
-			ready = playMin >= row.requiredMin and not isClaimed(data, row.id),
+			claimed = claimed,
+			ready = (playMin >= row.requiredMin) and not claimed,
 		})
 	end
 
 	for _, t in ipairs(SOCIAL_TARGETS) do
 		local qid = "social_" .. tostring(t.id)
 		local claimed = isClaimed(data, qid)
-		local follows = isFollowing(player.UserId, t.id)
+		local visitAt = (data.socialVisitAt and data.socialVisitAt[qid]) or 0
+		local waitLeft = 0
+
+		if visitAt > 0 then
+			waitLeft = math.max(0, SOCIAL_CLAIM_DELAY - (os.time() - visitAt))
+		end
 
 		table.insert(categories.social, {
 			id = qid,
 			left = t.title,
 			rewards = t.rewards,
 			claimed = claimed,
-			ready = follows and not claimed,
-			follows = follows,
+			ready = (visitAt > 0 and waitLeft <= 0 and not claimed),
+			waitLeft = waitLeft,
 		})
 	end
 
 	for idx, row in ipairs(DAILY) do
+		local claimed = isClaimed(data, row.id)
 		table.insert(categories.daily, {
 			id = row.id,
 			rewards = row.rewards,
-			claimed = isClaimed(data, row.id),
-			ready = data.dailyDay == idx and dailyLeft <= 0,
+			claimed = claimed,
+			ready = (data.dailyDay == idx and dailyLeft <= 0 and not claimed),
 		})
 	end
 
@@ -437,30 +422,35 @@ local function buildPayload(player, data)
 	if ok and inGroup then
 		groupReady = true
 	end
+
+	local groupClaimed = isClaimed(data, "group_main")
 	table.insert(categories.group, {
 		id = "group_main",
 		rewards = "+$200, +1 Magnifier, +1 Hook",
-		claimed = isClaimed(data, "group_main"),
-		ready = groupReady and not isClaimed(data, "group_main"),
+		claimed = groupClaimed,
+		ready = groupReady and not groupClaimed,
 	})
 
 	local perks = player:FindFirstChild("ShopPerks")
 	local vip = perks and perks:FindFirstChild("VIPPack")
 	local vipReady = vip and vip:IsA("BoolValue") and vip.Value == true
+	local vipClaimed = isClaimed(data, "vip_daily_main")
+
 	table.insert(categories.vipdaily, {
 		id = "vip_daily_main",
 		rewards = "+$300, +1 Magnifier, +2 Hook",
-		claimed = isClaimed(data, "vip_daily_main"),
-		ready = vipReady and not isClaimed(data, "vip_daily_main"),
+		claimed = vipClaimed,
+		ready = vipReady and not vipClaimed,
 	})
 
 	for _, row in ipairs(ROBUX_SPENT) do
+		local claimed = isClaimed(data, row.id)
 		table.insert(categories.robuxspent, {
 			id = row.id,
 			rewards = row.rewards,
 			left = row.required,
-			claimed = isClaimed(data, row.id),
-			ready = robuxSpent >= row.required and not isClaimed(data, row.id),
+			claimed = claimed,
+			ready = robuxSpent >= row.required and not claimed,
 		})
 	end
 
@@ -480,19 +470,32 @@ local function syncPlayer(player)
 	RewardSync:FireClient(player, buildPayload(player, data))
 end
 
+SocialVisit.OnServerEvent:Connect(function(player, rowId)
+	local data = ensureData(player)
+	data.socialVisitAt = data.socialVisitAt or {}
+
+	rowId = tostring(rowId or "")
+	if rowId == "" then return end
+	data.socialVisitAt[rowId] = os.time()
+
+	saveData(player)
+	syncPlayer(player)
+end)
+
 RewardClaim.OnServerEvent:Connect(function(player, categoryId, rowId)
 	local data = ensureData(player)
+	categoryId = tostring(categoryId or "")
+	rowId = tostring(rowId or "")
 
 	if categoryId == "social" then
-		local targetId = tonumber(string.match(rowId or "", "social_(%d+)"))
-		if not targetId then return end
-
-		if not isFollowing(player.UserId, targetId) then
+		local visitAt = (data.socialVisitAt and data.socialVisitAt[rowId]) or 0
+		local waitLeft = SOCIAL_CLAIM_DELAY - (os.time() - visitAt)
+		if visitAt <= 0 or waitLeft > 0 then
 			NotifyPlayer:FireClient(player, {
-				title = "Not Eligible",
-				message = "Follow this developer first, then try again.",
+				title = "Not Ready",
+				message = "Press VISIT first, then wait a few seconds.",
 				kind = "warn",
-				duration = 3,
+				duration = 2.5,
 			})
 			syncPlayer(player)
 			return
@@ -539,6 +542,7 @@ end)
 
 AddRobuxSpent.OnServerEvent:Connect(function(player, amount)
 	if type(amount) ~= "number" or amount <= 0 then return end
+
 	local data = ensureData(player)
 	data.robuxSpent = (data.robuxSpent or 0) + amount
 	saveData(player)
