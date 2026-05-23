@@ -740,5 +740,25 @@ Players.PlayerRemoving:Connect(function(player)
 		clearSession(tableId)
 	end
 end)
+task.spawn(function()
+	while true do
+		task.wait(10)
+		local active = 0
+		local waiting = 0
+		local turn = 0
 
+		for tableId, s in pairs(sessions) do
+			if s.active then
+				active += 1
+				if s.phase == "country-pick" or s.phase == "letter-pick" then
+					waiting += 1
+				elseif s.phase == "turn" then
+					turn += 1
+				end
+			end
+		end
+
+		print(string.format("[GM MON] active=%d waitingPick=%d inTurn=%d", active, waiting, turn))
+	end
+end)
 print("[GameManager v2] Loaded. _G.OnBothSeated =", _G.OnBothSeated ~= nil)
