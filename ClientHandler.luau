@@ -894,12 +894,17 @@ if E.BotTableCountdown then
 end
 
 if E.ShowBillboard then
-	E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName)
-		if not iAmSeated then return end
-
+	E.ShowBillboard.OnClientEvent:Connect(function(targetName, text, colorName, sourceTableId)
+		-- Always render head billboard for everyone (including spectators)
 		local tp = Players:FindFirstChild(targetName)
 		if tp and _G.ShowHeadBB then
 			_G.ShowHeadBB(tp, text, colorFromName(colorName))
+		end
+
+		-- Camera/overlay logic only for seated local player at same table
+		if not iAmSeated then return end
+		if sourceTableId and myTableId and tostring(sourceTableId) ~= tostring(myTableId) then
+			return
 		end
 
 		if tostring(text) == "Guessing" then return end
