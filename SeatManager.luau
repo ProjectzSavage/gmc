@@ -87,22 +87,23 @@ local function canAct(player)
 end
 
 local function isClientReadyOrGrace(player)
-	if _G.IsClientReady and _G.IsClientReady(player) then
+	-- Wait up to 12s for a real ready signal; do not auto-pass by grace.
+	if not _G.IsClientReady then
+		-- If ready service missing, allow to avoid hard lock.
 		return true
 	end
 
-	local joined = joinAt[player.UserId] or os.clock()
-	local age = os.clock() - joined
-
-	if age >= CLIENT_READY_GRACE_SECONDS then
-		warn("[SeatManager] Allowing seat by grace for", player.Name, "age", age)
-		return true
+	local deadline = os.clock() + 12
+	while os.clock() < deadline do
+		if _G.IsClientReady(player) then
+			return true
+		end
+		task.wait(0.2)
 	end
 
-	warn("[SeatManager] Blocking seat: client not ready", player.Name, "age", age)
+	warn("[SeatManager] Blocking seat: client not ready after wait", player.Name)
 	return false
 end
-
 local function restoreMovement(humanoid, rootPart)
 	if humanoid then
 		humanoid.AutoRotate = true
