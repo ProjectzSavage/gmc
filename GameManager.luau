@@ -1,4 +1,4 @@
--- GameManager (multi-table, paced turns, head text, independent pick flow)
+-- GameManager v2 (multi-table, paced turns, robust pick watchdog)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -27,7 +27,7 @@ local E = {
 	ResetAll = event("ResetAll"),
 	TableCountdown = event("TableCountdown"),
 	TableStatus = event("TableStatus"),
-	SetHeadTagsVisible = event("SetHeadTagsVisible"), -- add this
+	SetHeadTagsVisible = event("SetHeadTagsVisible"),
 }
 
 local CFG = {
@@ -36,11 +36,20 @@ local CFG = {
 	ASK_TO_RESPONSE_DELAY = 1.2,
 	RESPONSE_DISPLAY_TIME = 1.7,
 	TURN_SWITCH_BUFFER = 0.65,
-	POST_PICK_TO_FIRST_TURN_DELAY = 2.0, -- add this
+	POST_PICK_TO_FIRST_TURN_DELAY = 2.0,
+	PICK_REMINDER_INTERVAL = 6,
+	PICK_TIMEOUT = 45,
+}
+
+local REWARDS = {
+	WinCash = 200,
+	WinIncrease = 1,
+	WinstreakIncrease = 1,
 }
 
 local sessions = {}
 local playerToTable = {}
+
 _G.GetSessionByPlayer = function(player)
 	if not player then return nil end
 	local tableId = playerToTable[player.UserId]
@@ -48,6 +57,10 @@ _G.GetSessionByPlayer = function(player)
 	local s = sessions[tableId]
 	if s and s.active then return s end
 	return nil
+end
+
+local function fireBillboardAll(session, targetName, text, colorName)
+	E.ShowBillboard:FireAllClients(targetName, tostring(text or ""), colorName, session.tableId)
 end
 
 local function countryListForLetter(letter)
@@ -65,12 +78,6 @@ local function countryExistsForLetter(letter, countryName)
 	end
 	return false
 end
-local REWARDS = {
-	WinCash = 200,
-	WinIncrease = 1,
-	WinstreakIncrease = 1,
-	
-}
 
 local function awardWinner(player)
 	if not player then return end
@@ -81,15 +88,8 @@ local function awardWinner(player)
 	local wins = stats:FindFirstChild("Wins")
 	local winstreak = stats:FindFirstChild("Winstreak")
 
-	local cashMult = 1
-	if _G.RewardsCashMultiplier then
-		cashMult = _G.RewardsCashMultiplier(player)
-	end
-
-	local streakMult = 1
-	if _G.RewardsStreakMultiplier then
-		streakMult = _G.RewardsStreakMultiplier(player)
-	end
+	local cashMult = (_G.RewardsCashMultiplier and _G.RewardsCashMultiplier(player)) or 1
+	local streakMult = (_G.RewardsStreakMultiplier and _G.RewardsStreakMultiplier(player)) or 1
 
 	if cash and cash:IsA("IntValue") then
 		cash.Value += math.floor(REWARDS.WinCash * cashMult)
@@ -111,11 +111,13 @@ local function resetLoserStreak(player)
 		ws.Value = 0
 	end
 end
+
 local function getWinstreakValue(player)
 	local stats = player and player:FindFirstChild("leaderstats")
 	local ws = stats and stats:FindFirstChild("Winstreak")
 	return (ws and ws:IsA("IntValue")) and ws.Value or 0
 end
+
 local function getOtherPlayer(session, player)
 	if player == session.playerA then return session.playerB end
 	if player == session.playerB then return session.playerA end
@@ -147,7 +149,6 @@ end
 local function fireBoth(session, remote, ...)
 	if session.playerA then remote:FireClient(session.playerA, ...) end
 	if session.playerB then remote:FireClient(session.playerB, ...) end
-
 end
 
 local function clearSession(tableId)
@@ -155,24 +156,52 @@ local function clearSession(tableId)
 	if not session then return end
 
 	sessions[tableId] = nil
+
+	if session.playerA and playerToTable[session.playerA.UserId] == tableId then
+		playerToTable[session.playerA.UserId] = nil
+	end
+	if session.playerB and playerToTable[session.playerB.UserId] == tableId then
+		playerToTable[session.playerB.UserId] = nil
+	end
+
 	if session.playerA and session.playerB then
-		E.SetHeadTagsVisible:FireAllClients({session.playerA.Name, session.playerB.Name}, true)
+		E.SetHeadTagsVisible:FireAllClients({ session.playerA.Name, session.playerB.Name }, true)
 	end
 
 	if _G.SeatManager and _G.SeatManager.setTablePromptEnabled then
 		_G.SeatManager.setTablePromptEnabled(tableId, true)
 	end
-	if session.playerA then playerToTable[session.playerA.UserId] = nil end
-	if session.playerB then playerToTable[session.playerB.UserId] = nil end
-	setTableStatus(tableId, "")
-	setTableCountdown(tableId, 0)
 	if _G.SeatManager and _G.SeatManager.setTableLocked then
 		_G.SeatManager.setTableLocked(tableId, false)
 	end
+
+	setTableStatus(tableId, "")
+	setTableCountdown(tableId, 0)
+end
+
+local function cancelSessionNoWinner(tableId, reason)
+	local session = sessions[tableId]
+	if not session or not session.active then return end
+
+	session.active = false
+	session.ending = true
+	session.token += 1
+
+	fireBoth(session, E.ShowWait, reason or "Match cancelled", nil, nil, nil)
+
+	task.delay(0.2, function()
+		if _G.SeatManager and _G.SeatManager.standPlayer then
+			if session.playerA then _G.SeatManager.standPlayer(session.playerA, true) end
+			if session.playerB then _G.SeatManager.standPlayer(session.playerB, true) end
+		end
+	end)
+
+	task.delay(0.5, function()
+		clearSession(tableId)
+	end)
 end
 
 local function endSessionWithWinner(tableId, winner, reason)
-
 	local session = sessions[tableId]
 	if not session or not session.active or session.ending then return end
 
@@ -181,10 +210,11 @@ local function endSessionWithWinner(tableId, winner, reason)
 	session.token += 1
 
 	local loser = getOtherPlayer(session, winner)
+
 	if _G.DailyQuestMarkWinWithFriend then
 		_G.DailyQuestMarkWinWithFriend(winner, loser)
 	end
-	-- Reward winner + reset loser streak
+
 	awardWinner(winner)
 	resetLoserStreak(loser)
 
@@ -195,20 +225,18 @@ local function endSessionWithWinner(tableId, winner, reason)
 		rewardCash = REWARDS.WinCash,
 	})
 
-	-- Temporary winner flame above head
 	if winner then
 		local streak = getWinstreakValue(winner)
 		local flames = string.rep("🔥", math.clamp(streak, 1, 5))
-		fireBoth(session, E.ShowBillboard, winner.Name, winner.Name .. " " .. flames, "green")
+		fireBillboardAll(session, winner.Name, winner.Name .. " " .. flames, "green")
 	end
 
-	-- Winner stands
 	task.delay(0.35, function()
 		if _G.SeatManager and _G.SeatManager.standPlayer and winner then
-			_G.SeatManager.standPlayer(winner, true)		end
+			_G.SeatManager.standPlayer(winner, true)
+		end
 	end)
 
-	-- Loser dies
 	task.delay(1.0, function()
 		if loser and loser.Character then
 			local hum = loser.Character:FindFirstChildOfClass("Humanoid")
@@ -220,6 +248,65 @@ local function endSessionWithWinner(tableId, winner, reason)
 
 	task.delay(1.5, function()
 		clearSession(tableId)
+	end)
+end
+
+local function getMissingPickPlayers(session)
+	local missing = {}
+
+	local aSec = getSecret(session, session.playerA)
+	local bSec = getSecret(session, session.playerB)
+
+	if not aSec or not aSec.letter then
+		table.insert(missing, { player = session.playerA, need = "letter" })
+	elseif not aSec.country then
+		table.insert(missing, { player = session.playerA, need = "country", letter = aSec.letter })
+	end
+
+	if not bSec or not bSec.letter then
+		table.insert(missing, { player = session.playerB, need = "letter" })
+	elseif not bSec.country then
+		table.insert(missing, { player = session.playerB, need = "country", letter = bSec.letter })
+	end
+
+	return missing
+end
+
+local function startPickWatchdog(session)
+	if session.pickWatchdogStarted then return end
+	session.pickWatchdogStarted = true
+
+	local watchToken = session.token
+	local startAt = os.clock()
+
+	task.spawn(function()
+		while session.active and session.token == watchToken and not session.started do
+			task.wait(CFG.PICK_REMINDER_INTERVAL)
+
+			if not session.active or session.token ~= watchToken or session.started then
+				return
+			end
+
+			local missing = getMissingPickPlayers(session)
+			if #missing == 0 then
+				return
+			end
+
+			setTableStatus(session.tableId, "Waiting for picks...")
+
+			for _, m in ipairs(missing) do
+				if m.need == "letter" then
+					E.ShowLetterPick:FireClient(m.player)
+				elseif m.need == "country" then
+					E.ShowCountryPick:FireClient(m.player, m.letter, countryListForLetter(m.letter))
+				end
+			end
+
+			if os.clock() - startAt >= CFG.PICK_TIMEOUT then
+				cancelSessionNoWinner(session.tableId, "Pick timeout - resetting table")
+				return
+			end
+		end
 	end)
 end
 
@@ -300,19 +387,26 @@ end
 local function maybeStartGame(tableId)
 	local session = sessions[tableId]
 	if not session or not session.active then return end
+	if session.started then return end
 
 	local a = getSecret(session, session.playerA)
 	local b = getSecret(session, session.playerB)
-	if not a or not b or not a.country or not b.country then return end
+
+	if not a or not b or not a.country or not b.country then
+		print(
+			"[GameManager] maybeStartGame waiting",
+			tableId,
+			"A(letter,country)=", a and a.letter, a and a.country,
+			"B(letter,country)=", b and b.letter, b and b.country
+		)
+		return
+	end
 
 	session.phase = "pre-turn"
 	session.turnPlayer = (math.random(1, 2) == 1) and session.playerA or session.playerB
 	setTableStatus(tableId, "Get ready...")
 
-	-- hide player name tags during gameplay
-	E.SetHeadTagsVisible:FireAllClients({session.playerA.Name, session.playerB.Name}, false)
-
-	-- short pause before first guess turn
+	E.SetHeadTagsVisible:FireAllClients({ session.playerA.Name, session.playerB.Name }, false)
 	fireBoth(session, E.ShowWait, "Get ready...", nil, nil, nil)
 
 	task.delay(CFG.POST_PICK_TO_FIRST_TURN_DELAY, function()
@@ -331,8 +425,21 @@ local function beginLetterPick(tableId)
 	E.ShowLetterPick:FireClient(session.playerB)
 end
 
+local function forceClearPlayerFromOtherSession(player)
+	local oldTable = playerToTable[player.UserId]
+	if not oldTable then return end
+	if sessions[oldTable] then
+		cancelSessionNoWinner(oldTable, "Session resync")
+	else
+		playerToTable[player.UserId] = nil
+	end
+end
+
 local function createSession(tableId, playerA, playerB)
-	if sessions[tableId] then return end
+	if sessions[tableId] and sessions[tableId].active then return end
+
+	forceClearPlayerFromOtherSession(playerA)
+	forceClearPlayerFromOtherSession(playerB)
 
 	local session = {
 		tableId = tableId,
@@ -344,6 +451,7 @@ local function createSession(tableId, playerA, playerB)
 		phase = "countdown",
 		token = 0,
 		turnPlayer = nil,
+		pickWatchdogStarted = false,
 
 		secret = {
 			[playerA.UserId] = { letter = nil, country = nil, elimMin = 0, elimMax = 27, wrongCountries = {} },
@@ -365,10 +473,13 @@ local function createSession(tableId, playerA, playerB)
 	if _G.SeatManager and _G.SeatManager.setTableLocked then
 		_G.SeatManager.setTableLocked(tableId, true)
 	end
+
 	setTableStatus(tableId, "Both players are ready")
+
 	if _G.DailyQuestMarkPlayedWithFriend then
 		_G.DailyQuestMarkPlayedWithFriend(playerA, playerB)
 	end
+
 	task.spawn(function()
 		for t = CFG.COUNTDOWN_START, 1, -1 do
 			if not session.active then return end
@@ -376,55 +487,33 @@ local function createSession(tableId, playerA, playerB)
 			task.wait(1)
 		end
 
-		-- Countdown ended: lock now (game start)
+		if not session.active then return end
+
 		if _G.SeatManager and _G.SeatManager.setTableLocked then
 			_G.SeatManager.setTableLocked(tableId, true)
 		end
 
 		setTableCountdown(tableId, 0)
 		beginLetterPick(tableId)
+		startPickWatchdog(session)
 	end)
-	end
+end
 
 _G.OnBothSeated = function(tableId, playerA, playerB)
 	createSession(tableId, playerA, playerB)
 end
-local function cancelSessionNoWinner(tableId, reason)
-	local session = sessions[tableId]
-	if not session or not session.active then return end
 
-	session.active = false
-	session.ending = true
-	session.token += 1
-
-	-- Optional info message (no rewards)
-	fireBoth(session, E.ShowWait, reason or "Match cancelled", nil, nil, nil)
-
-	-- Stand both players safely
-	task.delay(0.2, function()
-		if _G.SeatManager and _G.SeatManager.standPlayer then
-			if session.playerA then _G.SeatManager.standPlayer(session.playerA, true) end
-			if session.playerB then _G.SeatManager.standPlayer(session.playerB, true) end
-		end
-	end)
-
-	task.delay(0.5, function()
-		clearSession(tableId)
-	end)
-end
 _G.OnPlayerStood = function(player, tableId)
 	local session = sessions[tableId]
 	if not session or not session.active then return end
 
 	local other = getOtherPlayer(session, player)
 
-	-- If gameplay has not started yet, cancel session without winner/rewards.
 	if not session.started then
 		cancelSessionNoWinner(tableId, "Player left before match start")
 		return
 	end
 
-	-- Gameplay started: leaving counts as forfeit.
 	if other then
 		endSessionWithWinner(tableId, other, "opponent_left")
 	else
@@ -434,7 +523,16 @@ end
 
 E.LetterChosen.OnServerEvent:Connect(function(player, letter)
 	local tableId = playerToTable[player.UserId]
-	if not tableId then return end
+	if not tableId then
+		for tid, s in pairs(sessions) do
+			if s.active and (s.playerA == player or s.playerB == player) then
+				tableId = tid
+				playerToTable[player.UserId] = tid
+				break
+			end
+		end
+		if not tableId then return end
+	end
 
 	local session = sessions[tableId]
 	if not session or not session.active then return end
@@ -447,28 +545,45 @@ E.LetterChosen.OnServerEvent:Connect(function(player, letter)
 	if #countryListForLetter(upper) == 0 then return end
 
 	secret.letter = upper
-
-	-- Immediate country pick for this same player (no waiting for opponent letter)
-	E.ShowCountryPick:FireClient(player, upper, countryListForLetter(upper))
-
-	-- Keep phase open until both countries are set
 	session.phase = "country-pick"
+
+	E.ShowCountryPick:FireClient(player, upper, countryListForLetter(upper))
 end)
 
 E.CountryChosen.OnServerEvent:Connect(function(player, countryName)
 	local tableId = playerToTable[player.UserId]
-	if not tableId then return end
+	if not tableId then
+		for tid, s in pairs(sessions) do
+			if s.active and (s.playerA == player or s.playerB == player) then
+				tableId = tid
+				playerToTable[player.UserId] = tid
+				break
+			end
+		end
+		if not tableId then return end
+	end
 
 	local session = sessions[tableId]
-	if not session or not session.active or session.phase ~= "country-pick" then return end
+	if not session or not session.active then return end
+	if session.phase ~= "country-pick" and session.phase ~= "letter-pick" then return end
 
 	local secret = getSecret(session, player)
 	if not secret or not secret.letter then return end
-	if not countryExistsForLetter(secret.letter, countryName) then return end
 
-	secret.country = countryName
+	local picked = tostring(countryName or "")
+	if picked == "" then return end
+	picked = picked:gsub("^%s+", ""):gsub("%s+$", "")
+
+	if not countryExistsForLetter(secret.letter, picked) then
+		warn("[GameManager] CountryRejected", player.Name, "letter=", secret.letter, "country=", picked)
+		E.ShowCountryPick:FireClient(player, secret.letter, countryListForLetter(secret.letter))
+		return
+	end
+
+	secret.country = picked
 	E.ShowWait:FireClient(player, "Secret country chosen", nil, nil, nil)
 
+	print("[GameManager] CountryChosen", player.Name, "table", tableId, "country", picked)
 	maybeStartGame(tableId)
 end)
 
@@ -493,7 +608,7 @@ E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
 	local token = session.token
 
 	local askedText = "Is your letter " .. guess .. "?"
-	fireBoth(session, E.ShowBillboard, player.Name, askedText, "white")
+	fireBillboardAll(session, player.Name, askedText, "white")
 
 	task.delay(CFG.ASK_TO_RESPONSE_DELAY, function()
 		if not session.active or session.token ~= token then return end
@@ -506,17 +621,17 @@ E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
 			meProgress.letterKnown = true
 			result = "correct"
 			message = "YES"
-			fireBoth(session, E.ShowBillboard, other.Name, "YES", "green")
+			fireBillboardAll(session, other.Name, "YES", "green")
 		elseif guessed < actual then
 			me.elimMin = math.max(me.elimMin, guessed)
 			result = "higher"
 			message = "HIGHER"
-			fireBoth(session, E.ShowBillboard, other.Name, "HIGHER", "yellow")
+			fireBillboardAll(session, other.Name, "HIGHER", "yellow")
 		else
 			me.elimMax = math.min(me.elimMax, guessed)
 			result = "lower"
 			message = "LOWER"
-			fireBoth(session, E.ShowBillboard, other.Name, "LOWER", "yellow")
+			fireBillboardAll(session, other.Name, "LOWER", "yellow")
 		end
 
 		E.LetterGuessResult:FireClient(player, {
@@ -528,7 +643,6 @@ E.SubmitLetterGuess.OnServerEvent:Connect(function(player, guessLetter)
 
 		task.delay(CFG.RESPONSE_DISPLAY_TIME, function()
 			if not session.active then return end
-			-- Always alternate turns
 			session.turnPlayer = other
 			task.delay(CFG.TURN_SWITCH_BUFFER, function()
 				if session.active then openTurn(session) end
@@ -558,13 +672,13 @@ E.SubmitCountryGuess.OnServerEvent:Connect(function(player, countryGuess)
 	local token = session.token
 
 	local askedText = "Is your country " .. guess .. "?"
-	fireBoth(session, E.ShowBillboard, player.Name, askedText, "white")
+	fireBillboardAll(session, player.Name, askedText, "white")
 
 	task.delay(CFG.ASK_TO_RESPONSE_DELAY, function()
 		if not session.active or session.token ~= token then return end
 
 		if string.lower(guess) == string.lower(otherSecret.country) then
-			fireBoth(session, E.ShowBillboard, other.Name, "YES", "green")
+			fireBillboardAll(session, other.Name, "YES", "green")
 			E.CountryGuessResult:FireClient(player, {
 				result = "correct",
 				message = "YES",
@@ -585,7 +699,7 @@ E.SubmitCountryGuess.OnServerEvent:Connect(function(player, countryGuess)
 		end
 		table.sort(wrongList)
 
-		fireBoth(session, E.ShowBillboard, other.Name, "NO", "red")
+		fireBillboardAll(session, other.Name, "NO", "red")
 		E.CountryGuessResult:FireClient(player, {
 			result = "no",
 			message = "NO",
@@ -606,21 +720,7 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	local tableId = playerToTable[player.UserId]
 	if not tableId then return end
-	local function hardCancelSession(tableId, reason)
-		local session = sessions[tableId]
-		if not session then return end
 
-		session.active = false
-		session.ending = true
-		session.token += 1
-
-		if _G.SeatManager and _G.SeatManager.standPlayer then
-			if session.playerA then _G.SeatManager.standPlayer(session.playerA, true) end
-			if session.playerB then _G.SeatManager.standPlayer(session.playerB, true) end
-		end
-
-		clearSession(tableId)
-	end
 	local session = sessions[tableId]
 	if not session then
 		playerToTable[player.UserId] = nil
@@ -641,4 +741,4 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 end)
 
-print("[GameManager] Loaded. _G.OnBothSeated =", _G.OnBothSeated ~= nil)
+print("[GameManager v2] Loaded. _G.OnBothSeated =", _G.OnBothSeated ~= nil)
