@@ -8,10 +8,16 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 player.CharacterAdded:Wait()
 
-while not _G.Frames do
+local waited = 0
+while not _G.Frames and waited < 10 do
 	task.wait(0.1)
+	waited += 0.1
 end
-local F = _G.Frames
+if not _G.Frames then
+	warn("[ClientHandler] _G.Frames timeout; gameplay UI may init late")
+	-- do not return; we still want ClientReady and seating to work
+end
+local F = _G.Frames or {}
 
 local Events = RS:WaitForChild("Events", 15)
 if not Events then
@@ -30,7 +36,8 @@ end
 local E = {
 	PlayerSat = getRemote("PlayerSat", true),
 	PlayerStood = getRemote("PlayerStood", true),
-
+	PickCountdown = getRemote("PickCountdown", false),
+	PickBackToLetter = getRemote("PickBackToLetter", false),
 	ShowLetterPick = getRemote("ShowLetterPick", true),
 	LetterChosen = getRemote("LetterChosen", true),
 
@@ -953,7 +960,17 @@ if E.ShowWait then
 		end
 	end)
 end
-
+if E.PickCountdown then
+	E.PickCountdown.OnClientEvent:Connect(function(left)
+		local txt = "Pick Time: " .. tostring(math.max(0, tonumber(left) or 0)) .. "s"
+		if F.LPickTimerLbl and F.LPickF.Visible then
+			F.LPickTimerLbl.Text = txt
+		end
+		if F.CPickTimerLbl and F.CPickF.Visible then
+			F.CPickTimerLbl.Text = txt
+		end
+	end)
+end
 if E.ShowLetterPick then
 	E.ShowLetterPick.OnClientEvent:Connect(function()
 		if not iAmSeated then
@@ -966,7 +983,9 @@ if E.ShowLetterPick then
 			pendingShowLetterPick = true
 			return
 		end
-
+		if F.LPickTimerLbl then
+			F.LPickTimerLbl.Visible = true
+		end
 		openLetterPick()
 	end)
 end
@@ -974,7 +993,17 @@ end
 if E.ShowCountryPick then
 	E.ShowCountryPick.OnClientEvent:Connect(function(arg1, arg2)
 		if not iAmSeated then return end
-
+		if F.ReturnBtn then
+			F.ReturnBtn.Visible = true
+			F.ReturnBtn.MouseButton1Click:Connect(function()
+				if E.PickBackToLetter then
+					E.PickBackToLetter:FireServer()
+				end
+			end)
+		end
+		if F.CPickTimerLbl then
+			F.CPickTimerLbl.Visible = true
+		end
 		hideAll()
 		hideGuessingOverlay()
 		F.CPickF.Visible = true
