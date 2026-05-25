@@ -1,8 +1,6 @@
--- Multi-table SeatManager for Workspace.Tables
--- Debug build: leave DEBUG = true until seat issue is confirmed fixed.
-local DEBUG = false
-local CLIENT_READY_GRACE_SECONDS = 10
-local joinAt = {}
+-- SeatManager v2.1 (multi-table, hardened for live)
+local DEBUG = true
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -25,13 +23,13 @@ if not events then
 end
 
 local function ensureEvent(name)
-	local event = events:FindFirstChild(name)
-	if event and event:IsA("RemoteEvent") then return event end
-	if event then event:Destroy() end
-	event = Instance.new("RemoteEvent")
-	event.Name = name
-	event.Parent = events
-	return event
+	local ev = events:FindFirstChild(name)
+	if ev and ev:IsA("RemoteEvent") then return ev end
+	if ev then ev:Destroy() end
+	ev = Instance.new("RemoteEvent")
+	ev.Name = name
+	ev.Parent = events
+	return ev
 end
 
 local function ensureFunction(name)
@@ -54,7 +52,7 @@ for _, name in ipairs({
 	"ShowLetterGuess", "SubmitLetterGuess", "LetterGuessResult",
 	"ShowCountryGuess", "SubmitCountryGuess", "CountryGuessResult",
 	"ShowWait", "ShowBillboard", "TimerTick", "GameOver", "ResetAll",
-	}) do
+}) do
 	ensureEvent(name)
 end
 
@@ -67,19 +65,19 @@ local RequestStand = events:WaitForChild("RequestStand")
 local tablesFolder = workspace:WaitForChild("Tables")
 
 local ACTION_COOLDOWN = 0.18
-local CLIENT_READY_GRACE_SECONDS = 8
+local READY_WAIT_SECONDS = 8
 
-local lastActionAt = {}
 local joinAt = {}
+local lastActionAt = {}
 
 local tables = {}
 local playerToSeat = {}
 
 local function canAct(player)
 	local now = os.clock()
-	local previous = lastActionAt[player.UserId] or 0
-	if now - previous < ACTION_COOLDOWN then
-		dprint("Action cooldown block:", player.Name, string.format("%.2f", now - previous))
+	local prev = lastActionAt[player.UserId] or 0
+	if now - prev < ACTION_COOLDOWN then
+		dprint("Action cooldown block:", player.Name, string.format("%.2f", now - prev))
 		return false
 	end
 	lastActionAt[player.UserId] = now
@@ -87,63 +85,68 @@ local function canAct(player)
 end
 
 local function isClientReadyOrGrace(player)
-	-- Wait up to 12s for a real ready signal; do not auto-pass by grace.
 	if not _G.IsClientReady then
-		-- If ready service missing, allow to avoid hard lock.
 		return true
 	end
 
-	local deadline = os.clock() + 12
+	local deadline = os.clock() + READY_WAIT_SECONDS
 	while os.clock() < deadline do
 		if _G.IsClientReady(player) then
 			return true
 		end
-		task.wait(0.2)
+		task.wait(0.15)
 	end
 
-	warn("[SeatManager] Blocking seat: client not ready after wait", player.Name)
-	return false
+	-- Fail-open for live stability.
+	warn("[SeatManager] Ready timeout fallback allow:", player.Name)
+	return true
 end
-local function restoreMovement(humanoid, rootPart)
-	if humanoid then
-		humanoid.AutoRotate = true
-		humanoid.PlatformStand = false
-		humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
-		humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
-		humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
-		humanoid:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-		humanoid.WalkSpeed = 21
-		humanoid.JumpPower = 50
-		humanoid.JumpHeight = 7.2
-		humanoid.Sit = false
+
+local function restoreMovement(h, hrp)
+	if h then
+		h.AutoRotate = true
+		h.PlatformStand = false
+		h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+		h:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
+		h.WalkSpeed = 21
+		h.JumpPower = 50
+		h.JumpHeight = 7.2
+		h.Sit = false
 	end
-	if rootPart then
-		rootPart.Anchored = false
+	if hrp then
+		hrp.Anchored = false
 	end
 end
 
-local function lockSeated(humanoid, rootPart, seatPart)
-	if not humanoid or not rootPart then return end
-	rootPart.AssemblyLinearVelocity = Vector3.zero
-	rootPart.AssemblyAngularVelocity = Vector3.zero
-	rootPart.CFrame = seatPart.CFrame * CFrame.new(0, seatPart.Size.Y / 2 + 2.05, 0)
-	rootPart.Anchored = true
-	humanoid.AutoRotate = false
-	humanoid.PlatformStand = false
-	humanoid.WalkSpeed = 0
-	humanoid.Sit = true
-	humanoid:ChangeState(Enum.HumanoidStateType.Seated)
+local function lockSeated(h, hrp, seatPart)
+	if not h or not hrp then return end
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+	hrp.CFrame = seatPart.CFrame * CFrame.new(0, seatPart.Size.Y / 2 + 2.05, 0)
+	hrp.Anchored = true
+	h.AutoRotate = false
+	h.PlatformStand = false
+	h.WalkSpeed = 0
+	h.Sit = true
+	h:ChangeState(Enum.HumanoidStateType.Seated)
 end
 
 local function getSeatRecord(player)
 	return playerToSeat[player.UserId]
 end
 
-local function standPlayer(player, force)
-	local record = getSeatRecord(player)
-	if not record then return false end
+local function applyPromptState(tableState)
+	if not tableState or not tableState.sitPrompt then return end
+	tableState.sitPrompt.Enabled = (tableState.promptsEnabled == true) and (tableState.locked ~= true)
+end
 
-	local tableState = tables[record.tableId]
+local function standPlayer(player, force)
+	local rec = getSeatRecord(player)
+	if not rec then return false end
+
+	local tableState = tables[rec.tableId]
 	if not tableState then
 		playerToSeat[player.UserId] = nil
 		return false
@@ -152,25 +155,25 @@ local function standPlayer(player, force)
 	if tableState.locked and not force then
 		local session = _G.GetSessionByPlayer and _G.GetSessionByPlayer(player) or nil
 		if session and session.started then
-			dprint("Stand blocked (live round):", player.Name, record.tableId, record.slot)
+			dprint("Stand blocked (live round):", player.Name, rec.tableId, rec.slot)
 			return false
 		end
 		tableState.locked = false
 	end
 
-	local seatState = tableState.seats[record.slot]
+	local seatState = tableState.seats[rec.slot]
 	if not seatState or seatState.player ~= player then
 		playerToSeat[player.UserId] = nil
 		return false
 	end
 
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	local char = player.Character
+	local h = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-	restoreMovement(humanoid, rootPart)
-	if rootPart then
-		rootPart.CFrame = seatState.part.CFrame * CFrame.new(0, 4, 5)
+	restoreMovement(h, hrp)
+	if hrp then
+		hrp.CFrame = seatState.part.CFrame * CFrame.new(0, 4, 5)
 	end
 
 	if seatState.deadConn then
@@ -181,13 +184,22 @@ local function standPlayer(player, force)
 	seatState.player = nil
 	playerToSeat[player.UserId] = nil
 
-	PlayerStood:FireAllClients(record.slot, player.Name, record.tableId)
+	PlayerStood:FireAllClients(rec.slot, player.Name, rec.tableId)
 
 	if _G.OnPlayerStood then
-		_G.OnPlayerStood(player, record.tableId, record.slot)
+		_G.OnPlayerStood(player, rec.tableId, rec.slot)
 	end
 
-	dprint("Player stood:", player.Name, record.tableId, record.slot, "force:", force)
+	-- If table is not full anymore, unlock and restore prompt.
+	local a = tableState.seats.A.player
+	local b = tableState.seats.B.player
+	if not a or not b then
+		tableState.locked = false
+		tableState.promptsEnabled = true
+		applyPromptState(tableState)
+	end
+
+	dprint("Player stood:", player.Name, rec.tableId, rec.slot, "force:", force)
 	return true
 end
 
@@ -217,8 +229,13 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 		return false
 	end
 
-	if not isClientReadyOrGrace(player) then
-		return false
+	local function isClientReadyOrGrace(player)
+		if _G.IsClientReady and _G.IsClientReady(player) then
+			return true
+		end
+		-- one short grace tick only
+		task.wait(0.05)
+		return true
 	end
 
 	local tableState = tables[tableId]
@@ -232,10 +249,10 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 		return false
 	end
 
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or not rootPart then
+	local char = player.Character
+	local h = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not h or not hrp then
 		dprint("Seat blocked: missing humanoid/root:", player.Name)
 		return false
 	end
@@ -254,7 +271,7 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	end
 
 	local seatState = tableState.seats[chosenSlot]
-	lockSeated(humanoid, rootPart, seatState.part)
+	lockSeated(h, hrp, seatState.part)
 
 	seatState.player = player
 	playerToSeat[player.UserId] = {
@@ -265,7 +282,7 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	if seatState.deadConn then
 		seatState.deadConn:Disconnect()
 	end
-	seatState.deadConn = humanoid.Died:Connect(function()
+	seatState.deadConn = h.Died:Connect(function()
 		if seatState.player == player then
 			standPlayer(player, true)
 		end
@@ -279,16 +296,15 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 	if playerA and playerB then
 		tableState.token += 1
 		local token = tableState.token
-
 		task.delay(0.2, function()
-			local againA = tableState.seats.A.player
-			local againB = tableState.seats.B.player
+			local a2 = tableState.seats.A.player
+			local b2 = tableState.seats.B.player
 			if tableState.token ~= token then return end
-			if not (againA and againB) then return end
+			if not (a2 and b2) then return end
 
 			if _G.OnBothSeated then
-				_G.OnBothSeated(tableId, againA, againB)
-				dprint("OnBothSeated fired:", tableId, againA.Name, againB.Name)
+				_G.OnBothSeated(tableId, a2, b2)
+				dprint("OnBothSeated fired:", tableId, a2.Name, b2.Name)
 			else
 				dwarn("_G.OnBothSeated missing for table:", tableId)
 			end
@@ -299,47 +315,42 @@ local function trySeatPlayerAtTable(player, tableId, preferredSlot)
 end
 
 local function closestAvailableTable(player)
-	local character = player.Character
-	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-	if not rootPart then return nil end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
 
-	local bestTableId
-	local bestDistance = math.huge
+	local bestId
+	local bestDist = math.huge
 
 	for tableId, tableState in pairs(tables) do
 		if tableState.promptsEnabled and (not tableState.seats.A.player or not tableState.seats.B.player) then
-			local distance = (tableState.tableTop.Position - rootPart.Position).Magnitude
-			if distance < bestDistance then
-				bestDistance = distance
-				bestTableId = tableId
+			local dist = (tableState.tableTop.Position - hrp.Position).Magnitude
+			if dist < bestDist then
+				bestDist = dist
+				bestId = tableId
 			end
 		end
 	end
 
-	return bestTableId
+	return bestId
 end
 
-local function applyPromptState(tableState)
-	if not tableState or not tableState.sitPrompt then return end
-	tableState.sitPrompt.Enabled = (tableState.promptsEnabled == true) and (tableState.locked ~= true)
-end
-
-local function addTable(tableModel)
-	local seatA = tableModel:FindFirstChild("SeatA")
-	local seatB = tableModel:FindFirstChild("SeatB")
-	local tableTop = tableModel:FindFirstChild("TableTop")
+local function addTable(model)
+	local seatA = model:FindFirstChild("SeatA")
+	local seatB = model:FindFirstChild("SeatB")
+	local tableTop = model:FindFirstChild("TableTop")
 	if not (seatA and seatB and tableTop) then
-		dwarn("Missing SeatA/SeatB/TableTop on", tableModel:GetFullName())
+		dwarn("Missing SeatA/SeatB/TableTop on", model:GetFullName())
 		return
 	end
 
 	seatA.Anchored = true
 	seatB.Anchored = true
 
-	local tableId = tableModel.Name
+	local tableId = model.Name
 	local tableState = {
 		id = tableId,
-		model = tableModel,
+		model = model,
 		tableTop = tableTop,
 		token = 0,
 		promptsEnabled = true,
@@ -368,6 +379,7 @@ local function addTable(tableModel)
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = tableTop
 	tableState.sitPrompt = prompt
+	applyPromptState(tableState)
 
 	prompt.Triggered:Connect(function(player)
 		dprint("Prompt triggered:", player.Name, tableId)
@@ -383,12 +395,14 @@ for _, child in ipairs(tablesFolder:GetChildren()) do
 	end
 end
 
+tablesFolder.ChildAdded:Connect(function(child)
+	if child:IsA("Model") then
+		addTable(child)
+	end
+end)
+
 RequestSit.OnServerEvent:Connect(function(player, tableId, slot)
 	dprint("RequestSit:", player.Name, "table:", tostring(tableId), "slot:", tostring(slot))
-
-	if not isClientReadyOrGrace(player) then
-		return
-	end
 	if not canAct(player) then return end
 	if getSeatRecord(player) then return end
 
@@ -397,7 +411,7 @@ RequestSit.OnServerEvent:Connect(function(player, tableId, slot)
 		targetTable = closestAvailableTable(player)
 	end
 	if not targetTable then
-		dprint("RequestSit blocked: no targetTable for", player.Name)
+		dprint("RequestSit blocked: no target table for", player.Name)
 		return
 	end
 
@@ -424,10 +438,26 @@ RunService.Heartbeat:Connect(function()
 		for _, seatState in pairs(tableState.seats) do
 			local p = seatState.player
 			if p then
-				local character = p.Character
-				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-				local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-				lockSeated(humanoid, rootPart, seatState.part)
+				local char = p.Character
+				local h = char and char:FindFirstChildOfClass("Humanoid")
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				lockSeated(h, hrp, seatState.part)
+			end
+		end
+	end
+end)
+
+-- Watchdog: if table empty, force prompt usable.
+task.spawn(function()
+	while true do
+		task.wait(2)
+		for _, tableState in pairs(tables) do
+			local a = tableState.seats.A.player
+			local b = tableState.seats.B.player
+			if not a and not b then
+				tableState.locked = false
+				tableState.promptsEnabled = true
+				applyPromptState(tableState)
 			end
 		end
 	end
@@ -482,4 +512,4 @@ _G.SeatManager = {
 	end,
 }
 
-dprint("Multi-table ready:", #tablesFolder:GetChildren())
+dprint("SeatManager v2.1 ready. tables=", #tablesFolder:GetChildren())
