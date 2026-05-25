@@ -29,7 +29,17 @@ local E = {
 	TableStatus = event("TableStatus"),
 	SetHeadTagsVisible = event("SetHeadTagsVisible"),
 }
+local function ensureRemote(name)
+	local r = events:FindFirstChild(name)
+	if r then return r end
+	r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = events
+	return r
+end
 
+local PickCountdown = ensureRemote("PickCountdown")
+local PickBackToLetter = ensureRemote("PickBackToLetter")
 local CFG = {
 	COUNTDOWN_START = 3,
 	TURN_TIME = 60,
@@ -421,10 +431,46 @@ local function beginLetterPick(tableId)
 	local session = sessions[tableId]
 	if not session or not session.active then return end
 	session.phase = "letter-pick"
+	session.pickDeadline = os.time() + 30
+
+	if not session.pickTimerRunning then
+		session.pickTimerRunning = true
+		task.spawn(function()
+			while session.active and not session.started and os.time() <= session.pickDeadline do
+				local left = math.max(0, session.pickDeadline - os.time())
+				PickCountdown:FireClient(session.playerA, left)
+				PickCountdown:FireClient(session.playerB, left)
+				task.wait(1)
+			end
+
+			if session.active and not session.started then
+				cancelSessionNoWinner(session.tableId, "Pick timeout - resetting table")
+			end
+
+			session.pickTimerRunning = false
+		end)
+	end
+
 	E.ShowLetterPick:FireClient(session.playerA)
 	E.ShowLetterPick:FireClient(session.playerB)
 end
+	PickBackToLetter.OnServerEvent:Connect(function(player)
+		local tableId = playerToTable[player.UserId]
+		if not tableId then return end
+		local session = sessions[tableId]
+		if not session or not session.active or session.started then return end
 
+		local secret = getSecret(session, player)
+		if not secret then return end
+
+		secret.letter = nil
+		secret.country = nil
+
+		E.ShowLetterPick:FireClient(player)
+
+		local left = math.max(0, (session.pickDeadline or os.time()) - os.time())
+		PickCountdown:FireClient(player, left)
+	end)
 local function forceClearPlayerFromOtherSession(player)
 	local oldTable = playerToTable[player.UserId]
 	if not oldTable then return end
@@ -442,6 +488,8 @@ local function createSession(tableId, playerA, playerB)
 	forceClearPlayerFromOtherSession(playerB)
 
 	local session = {
+		pickDeadline = 0,
+		pickTimerRunning = false,
 		tableId = tableId,
 		playerA = playerA,
 		playerB = playerB,
